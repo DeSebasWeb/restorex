@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+
+# Environment
+.env
+.env.local
+backend/.env
+
+# Backups (large binary files)
+*.backup
+*.sql
+data/
+logs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/

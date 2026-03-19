@@ -1,0 +1,31 @@
+services:
+  backend:
+    build: ./backend
+    container_name: pg-backup-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - D:/Backups/PostgreSQL:/backups/databases
+      - ./logs:/app/logs
+    networks:
+      - backup-net
+
+  frontend:
+    build: ./frontend
+    container_name: pg-backup-ui
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - backup-net
+
+networks:
+  backup-net:
+    driver: bridge
