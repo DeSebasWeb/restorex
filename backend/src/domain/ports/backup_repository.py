@@ -25,8 +25,8 @@ class BackupRepository(ABC):
         """Find the most recent successful backup for a database."""
 
     @abstractmethod
-    def save_stats(self, db_name: str, stats: DbChangeStats, size_pretty: str = "") -> None:
-        """Save current change stats for change detection."""
+    def save_stats(self, db_name: str, stats: DbChangeStats, size_pretty: str = "", source: str = "backup") -> None:
+        """Save current change stats. source='scan' for display, 'backup' for detection."""
 
     @abstractmethod
     def get_saved_stats(self, db_name: str) -> DbChangeStats | None:

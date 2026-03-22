@@ -123,13 +123,14 @@ class PostgresBackupRepository(BackupRepository):
                 duration_seconds=result.duration_seconds,
             )
 
-    # ── Stats (change detection) ────────────────────────────────
+    # ── Stats ─────────────────────────────────────────────────────
 
-    def save_stats(self, db_name: str, stats: DbChangeStats, size_pretty: str = "") -> None:
+    def save_stats(self, db_name: str, stats: DbChangeStats, size_pretty: str = "", source: str = "backup") -> None:
+        """Save stats. source='scan' for dashboard display, source='backup' for change detection."""
         with session_scope() as session:
             existing = (
                 session.query(DbStatsModel)
-                .filter(DbStatsModel.db_name == db_name)
+                .filter(DbStatsModel.db_name == db_name, DbStatsModel.source == source)
                 .first()
             )
             if existing:
@@ -144,6 +145,7 @@ class PostgresBackupRepository(BackupRepository):
             else:
                 session.add(DbStatsModel(
                     db_name=db_name,
+                    source=source,
                     inserts=stats.inserts,
                     updates=stats.updates,
                     deletes=stats.deletes,
@@ -153,10 +155,11 @@ class PostgresBackupRepository(BackupRepository):
                 ))
 
     def get_saved_stats(self, db_name: str) -> DbChangeStats | None:
+        """Get stats saved by a BACKUP (not scan) for change detection."""
         with session_scope() as session:
             row = (
                 session.query(DbStatsModel)
-                .filter(DbStatsModel.db_name == db_name)
+                .filter(DbStatsModel.db_name == db_name, DbStatsModel.source == "backup")
                 .first()
             )
             if not row:
@@ -170,20 +173,25 @@ class PostgresBackupRepository(BackupRepository):
             )
 
     def get_all_stats(self) -> dict:
-        """Return all stats as a dict keyed by db_name. Used by ReportService."""
+        """Return latest stats per db for dashboard display. Prefers 'scan' source."""
         with session_scope() as session:
-            rows = session.query(DbStatsModel).all()
+            rows = session.query(DbStatsModel).order_by(DbStatsModel.saved_at.desc()).all()
+            # Deduplicate: prefer scan over backup for display
+            result = {}
+            for row in rows:
+                if row.db_name not in result:
+                    result[row.db_name] = row
             return {
-                row.db_name: {
-                    "inserts": row.inserts,
-                    "updates": row.updates,
-                    "deletes": row.deletes,
-                    "live_rows": row.live_rows,
-                    "table_count": row.table_count,
-                    "size": row.size_pretty or "Unknown",
-                    "saved_at": row.saved_at.isoformat() if row.saved_at else None,
+                db_name: {
+                    "inserts": r.inserts,
+                    "updates": r.updates,
+                    "deletes": r.deletes,
+                    "live_rows": r.live_rows,
+                    "table_count": r.table_count,
+                    "size": r.size_pretty or "Unknown",
+                    "saved_at": r.saved_at.isoformat() if r.saved_at else None,
                 }
-                for row in rows
+                for db_name, r in result.items()
             }
 
 
