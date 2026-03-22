@@ -19,16 +19,18 @@ function colorizeLog(line: string) {
 export function LogsPage() {
   const [logs, setLogs] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const loadLogs = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await api.getLogs()
       setLogs(data.logs || [])
-    } catch {
-      // silent
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load logs')
     } finally {
       setLoading(false)
     }
@@ -39,7 +41,7 @@ export function LogsPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `pg-backup-logs-${new Date().toISOString().slice(0, 10)}.txt`
+    a.download = `restorex-logs-${new Date().toISOString().slice(0, 10)}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -106,7 +108,7 @@ export function LogsPage() {
             </div>
             <span className="text-[11px] theme-text-faint ml-2 flex items-center gap-1">
               <Terminal size={11} />
-              pg-backup-manager &mdash; logs
+              restorex &mdash; logs
             </span>
           </div>
         </div>
@@ -116,8 +118,8 @@ export function LogsPage() {
           {logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 theme-text-faint">
               <Terminal size={32} className="mb-2 opacity-30" />
-              <p className="text-sm">No logs available</p>
-              <p className="text-xs mt-1">Click "Refresh" to load</p>
+              <p className="text-sm">{error || 'No logs available'}</p>
+              <p className="text-xs mt-1">{error ? 'Check backend connection' : 'Click "Refresh" to load'}</p>
             </div>
           ) : (
             <>

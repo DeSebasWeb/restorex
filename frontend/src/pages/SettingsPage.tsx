@@ -53,6 +53,7 @@ function Field({ label, name, value, onChange, type = 'text', placeholder, help,
 export function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null)
@@ -64,12 +65,15 @@ export function SettingsPage() {
 
   const loadSettings = async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const data = await api.getSettings()
       setSettings(data.settings)
       setConfigured(data.configured)
     } catch (err) {
-      toast('Failed to load settings', 'error')
+      const msg = err instanceof Error ? err.message : 'Failed to load settings'
+      setLoadError(msg)
+      toast(msg, 'error')
     } finally {
       setLoading(false)
     }
@@ -115,10 +119,25 @@ export function SettingsPage() {
     }
   }
 
-  if (loading || !settings) {
+  if (loading) {
     return (
       <div className="p-7 flex items-center justify-center h-64">
         <Loader2 size={24} className="animate-spin text-blue-500" />
+      </div>
+    )
+  }
+
+  if (loadError || !settings) {
+    return (
+      <div className="p-7 flex flex-col items-center justify-center h-64 gap-4">
+        <XCircle size={32} className="text-red-400" />
+        <p className="text-sm theme-text-secondary">{loadError || 'Failed to load settings'}</p>
+        <button
+          onClick={loadSettings}
+          className="px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 text-white hover:brightness-110 transition-all"
+        >
+          Retry
+        </button>
       </div>
     )
   }
@@ -190,6 +209,29 @@ export function SettingsPage() {
           <Field label="Local Backup Directory" name="BACKUP_LOCAL_DIR" value={settings.BACKUP_LOCAL_DIR} onChange={handleChange} placeholder="/backups/databases" help="Inside Docker, mapped to D:\Backups\PostgreSQL" />
           <Field label="Remote Temp Directory" name="BACKUP_REMOTE_TMP_DIR" value={settings.BACKUP_REMOTE_TMP_DIR} onChange={handleChange} placeholder="/tmp/pg_backups" help="Temporary directory on the remote server" />
           <Field label="Retention (days)" name="RETENTION_DAYS" value={settings.RETENTION_DAYS} onChange={handleChange} placeholder="7" help="Backups older than this are auto-deleted" />
+        </div>
+
+        <div className="pt-3 border-t theme-border">
+          <label className="flex items-center gap-3 cursor-pointer group">
+            <div className="relative">
+              <input
+                type="checkbox"
+                checked={!!settings.GENERATE_SQL}
+                onChange={e => setSettings({ ...settings, GENERATE_SQL: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 rounded-full bg-slate-600/40 peer-checked:bg-blue-500/80 transition-colors" />
+              <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-slate-300 peer-checked:bg-white peer-checked:translate-x-4 transition-all" />
+            </div>
+            <div>
+              <span className="text-sm font-medium theme-text-secondary group-hover:theme-text transition-colors">
+                Generate .sql.gz backup
+              </span>
+              <p className="text-[10px] theme-text-faint">
+                Creates a compressed SQL dump in addition to the .backup file. Disable to speed up backups significantly.
+              </p>
+            </div>
+          </label>
         </div>
       </div>
 

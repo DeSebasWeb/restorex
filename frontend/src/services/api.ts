@@ -1,12 +1,38 @@
 import type { StatusResponse, BackupRun, Report, AppSettings, ConnectionTestResult, BackupProgress } from '../types'
 
 const BASE = '/api'
+const REQUEST_TIMEOUT = 30000 // 30 seconds
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${url}`, options)
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data as T
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+
+  try {
+    const res = await fetch(`${BASE}${url}`, {
+      ...options,
+      signal: controller.signal,
+    })
+
+    // Try to parse JSON, but handle non-JSON responses (e.g., nginx 502 HTML page)
+    const contentType = res.headers.get('content-type') || ''
+    if (!contentType.includes('application/json')) {
+      const text = await res.text()
+      throw new Error(
+        res.ok ? `Unexpected response format from server` : `Server error (${res.status}): ${text.slice(0, 200)}`
+      )
+    }
+
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    return data as T
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out — server may be busy or unreachable')
+    }
+    throw err
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 export const api = {

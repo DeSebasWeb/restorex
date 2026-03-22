@@ -8,14 +8,16 @@ import type { Report } from '../types'
 export function ReportsPage() {
   const [report, setReport] = useState<Report | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const loadReport = async () => {
     setLoading(true)
+    setError(null)
     try {
       const data = await api.getReport()
       setReport(data)
-    } catch {
-      // silent
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load report')
     } finally {
       setLoading(false)
     }
@@ -29,8 +31,12 @@ export function ReportsPage() {
     return (
       <div className="p-7">
         <div className="theme-bg-card border theme-border rounded-2xl p-12 flex flex-col items-center">
-          <FileBarChart size={40} className="theme-text-faint mb-3" />
-          <p className="text-sm theme-text-muted">Loading report...</p>
+          {error ? (
+            <AlertTriangle size={40} className="text-red-400 mb-3" />
+          ) : (
+            <FileBarChart size={40} className="theme-text-faint mb-3" />
+          )}
+          <p className="text-sm theme-text-muted">{error || 'Loading report...'}</p>
           <button
             onClick={loadReport}
             disabled={loading}
