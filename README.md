@@ -1,199 +1,272 @@
-# Backup Manager
+<p align="center">
+  <img src="https://img.shields.io/badge/-%F0%9F%9B%A1%EF%B8%8F%20Restorex-10b981?style=for-the-badge&labelColor=0a0b14" alt="Restorex" height="40" />
+</p>
 
-Sistema automatizado de backups de bases de datos con deteccion inteligente de cambios, dashboard en tiempo real y arquitectura hexagonal.
+<h3 align="center">Automated Database Backup Engine</h3>
 
-![Dashboard](https://img.shields.io/badge/Dashboard-React%20%2B%20TypeScript-blue) ![API](https://img.shields.io/badge/API-Flask%20%2B%20SQLAlchemy-green) ![Docker](https://img.shields.io/badge/Deploy-Docker%20Compose-2496ED) ![License](https://img.shields.io/badge/License-MIT-yellow)
+<p align="center">
+  Smart change detection · Real-time dashboard · Docker-ready
+</p>
 
-## Que hace
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-api">API</a> ·
+  <a href="#-roadmap">Roadmap</a>
+</p>
 
-- Respalda automaticamente bases de datos PostgreSQL via SSH
-- Detecta que bases de datos cambiaron y solo respalda esas (Smart Backup)
-- Dashboard web profesional con progreso en tiempo real
-- Genera reportes ejecutivos para presentar a gerencia
-- Scheduler configurable (backup diario automatico)
-- Modo claro y oscuro
+<p align="center">
+  <img src="https://img.shields.io/badge/React_19-61DAFB?style=flat&logo=react&logoColor=black" />
+  <img src="https://img.shields.io/badge/Flask_3-000000?style=flat&logo=flask&logoColor=white" />
+  <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat&logo=postgresql&logoColor=white" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat&logo=tailwindcss&logoColor=white" />
+  <img src="https://img.shields.io/badge/License-MIT-10b981?style=flat" />
+</p>
 
-## Arquitectura
+---
 
-```
-backend/                          # Python - Arquitectura Hexagonal
-├── src/
-│   ├── domain/                   # Nucleo de negocio (0 dependencias)
-│   │   ├── entities/             # BackupRecord, DatabaseInfo
-│   │   ├── ports/                # Interfaces: RemoteExecutor, DatabaseInspector,
-│   │   │                         #   FileTransfer, Filesystem, BackupRepository
-│   │   ├── value_objects/        # BackupFormat, DbChangeStats, DbName (validated)
-│   │   └── exceptions.py
-│   │
-│   ├── application/              # Casos de uso (solo depende de domain)
-│   │   ├── services/             # BackupService, ReportService
-│   │   └── dto/                  # BackupResultDTO, BackupSummaryDTO, DatabaseStatusDTO
-│   │
-│   ├── infrastructure/           # Adaptadores de salida
-│   │   ├── adapters/             # SSHAdapter, PostgresAdapter, FilesystemAdapter
-│   │   ├── database/             # SQLAlchemy models, engine, Alembic migrations
-│   │   ├── persistence/          # PostgresBackupRepository, SettingsRepository, ProgressTracker
-│   │   └── config.py             # Settings (DB > .env > defaults)
-│   │
-│   ├── entry_points/             # Adaptadores de entrada
-│   │   ├── api/app.py            # Flask REST API
-│   │   ├── cli.py                # Ejecucion por terminal
-│   │   └── scheduler.py          # APScheduler (backup diario)
-│   │
-│   └── container.py              # Inyeccion de dependencias
+## The Problem
 
-frontend/                         # React + Vite + TypeScript + Tailwind
-├── src/
-│   ├── components/               # Sidebar, TopBar, StatCard, ProgressRing,
-│   │                             #   StatusDot, Toast, BackupProgressBar
-│   ├── pages/                    # Dashboard, Databases, History, Reports, Logs, Settings
-│   ├── hooks/                    # useBackupStatus, useTheme
-│   ├── services/api.ts           # Cliente HTTP tipado
-│   ├── types/index.ts            # Interfaces TypeScript
-│   └── utils/format.ts           # Utilidades compartidas
-```
+You manage production databases. You know you should back them up daily. But you forget, or the script breaks silently, or you waste time backing up databases that haven't changed. Restorex fixes all of that.
 
-## Stack
+## The Solution
 
-| Capa | Tecnologia |
-|---|---|
-| Frontend | React 19, Vite 8, TypeScript, Tailwind CSS 4 |
-| API | Flask 3, Flask-CORS |
-| ORM | SQLAlchemy 2, Alembic |
-| SSH/SFTP | Paramiko |
-| Scheduler | APScheduler |
-| DB Metadata | PostgreSQL (local) |
-| Deploy | Docker Compose, nginx |
+Restorex connects to your server via SSH, detects which databases actually changed, backs up only those, and shows you everything in a professional dashboard. Set it up once, and it runs automatically.
 
-## Requisitos
+---
 
-- Docker Desktop
-- PostgreSQL corriendo en tu maquina (para metadata de la app)
-- Acceso SSH al servidor remoto donde estan las bases de datos
-- OpenVPN o acceso de red al servidor
-
-## Instalacion
+## Quick Start
 
 ```bash
-# 1. Clonar
 git clone https://github.com/DeSebasWeb/backup-manager.git
 cd backup-manager
-
-# 2. Configurar
-cp backend/.env.example backend/.env
-# Editar backend/.env con tu LOCAL_DB_URL (PostgreSQL local)
-
-# 3. Crear directorio de backups
-mkdir -p D:/Backups/PostgreSQL
-
-# 4. Levantar
+cp backend/.env.example backend/.env    # Edit with your local DB URL
 docker compose up --build -d
-
-# 5. Abrir
-# http://localhost:3000
 ```
 
-## Configuracion
+Open **http://localhost:3000** → Go to **Settings** → Enter your server credentials → **Test Connection** → **Scan DBs** → **Smart Backup**
 
-Todo se configura desde el dashboard en **Settings**:
+> **Requirements:** Docker Desktop + PostgreSQL running locally (for app metadata)
 
-| Campo | Descripcion |
+---
+
+## Features
+
+### Smart Change Detection
+Queries `pg_stat_user_tables` to detect INSERTs, UPDATEs, and DELETEs since the last backup. Databases with no changes are skipped automatically. New databases are always backed up on first run.
+
+### Real-time Dashboard
+Professional React UI with live progress bars, download percentages, backup coverage ring, database overview table, and recent run history. Dark and light mode included.
+
+### Dual Format Output
+Every backup generates two files:
+- **`.backup`** — PostgreSQL custom format. Compressed, fast to restore, supports parallel restore
+- **`.sql.gz`** — Gzipped plain SQL. Human-readable, portable. Optional (configurable in Settings)
+
+### Automatic Scheduling
+Built-in APScheduler runs backups daily at your configured time. Manual backup available anytime via dashboard or CLI.
+
+### Executive Reports
+Generate reports with KPIs: success rate, storage used, databases without protection. Print-ready for management presentations.
+
+### Secure by Design
+- SSH tunnels with host key verification (saved to `known_hosts`)
+- All shell arguments escaped with `shlex.quote()`
+- Remote file cleanup via SFTP (not shell `rm`)
+- Path validation — only deletes inside `/tmp/pg_backups/`
+- Database names validated with `DbName` value object (regex, max 63 chars)
+- Credentials stored in local PostgreSQL, masked in UI
+
+### Full Configuration from UI
+No need to edit `.env` files. Configure SSH, PostgreSQL, backup directory, retention days, schedule time, and SQL generation — all from the Settings page. Test connection with one click.
+
+---
+
+## Architecture
+
+Built with **hexagonal architecture** (ports & adapters). The domain layer has zero external dependencies.
+
+```
+backend/src/
+├── domain/                    # Business core — 0 dependencies
+│   ├── entities/              # BackupRecord, DatabaseInfo
+│   ├── ports/                 # Interfaces (RemoteExecutor, FileTransfer,
+│   │                          #   DatabaseInspector, Filesystem, BackupRepository)
+│   ├── value_objects/         # BackupFormat, DbChangeStats, DbName
+│   └── exceptions.py
+│
+├── application/               # Use cases — depends only on domain
+│   ├── services/              # BackupService, ReportService
+│   └── dto/                   # BackupResultDTO, BackupSummaryDTO, DatabaseStatusDTO
+│
+├── infrastructure/            # Output adapters — implements ports
+│   ├── adapters/              # SSHAdapter, PostgresAdapter, FilesystemAdapter
+│   ├── database/              # SQLAlchemy models, engine, auto-migrations
+│   ├── persistence/           # PostgresBackupRepository, SettingsRepository,
+│   │                          #   ProgressTracker
+│   └── config.py              # Settings (DB > .env > defaults)
+│
+├── entry_points/              # Input adapters
+│   ├── api/app.py             # Flask REST API
+│   ├── cli.py                 # Terminal execution
+│   └── scheduler.py           # APScheduler (daily backup)
+│
+└── container.py               # Dependency injection
+
+frontend/src/
+├── components/                # Sidebar, TopBar, StatCard, ProgressRing,
+│                              #   BackupProgressBar, StatusDot, Toast
+├── pages/                     # Dashboard, Databases, History, Reports, Logs, Settings
+├── hooks/                     # useBackupStatus, useTheme
+├── services/api.ts            # Typed HTTP client with timeout + error handling
+├── types/index.ts             # TypeScript interfaces
+└── utils/format.ts            # Shared formatters
+```
+
+### Tech Stack
+
+| Layer | Technology |
 |---|---|
-| SSH Host | IP del servidor remoto (via VPN) |
-| SSH User/Password | Credenciales SSH |
-| PG Host | Host de PostgreSQL (usualmente `localhost` desde el server) |
-| PG User/Password | Credenciales de PostgreSQL |
-| Backup Dir | Directorio local para backups (`/backups/databases` en Docker) |
-| Retention | Dias de retencion (default: 7) |
-| Schedule | Hora del backup diario automatico (default: 23:00) |
+| **Frontend** | React 19, Vite 8, TypeScript, Tailwind CSS 4 |
+| **API** | Flask 3, Flask-CORS |
+| **ORM** | SQLAlchemy 2, auto-migrations |
+| **SSH/SFTP** | Paramiko (keepalive, host key verification) |
+| **Scheduler** | APScheduler |
+| **Metadata DB** | PostgreSQL (local) |
+| **Deploy** | Docker Compose, nginx |
 
-## Flujo de backup
+---
+
+## How It Works
 
 ```
-1. Conectar al servidor via SSH
-2. Listar las N bases de datos (excluye template0, template1, postgres)
-3. Por cada DB:
-   a. Consultar pg_stat_user_tables para detectar cambios (I/U/D)
-   b. Si nunca se ha respaldado → backup obligatorio
-   c. Si ya tiene backup → solo si hay cambios
-   d. pg_dump -Fc → .backup (comprimido, restauracion rapida)
-   e. pg_dump -Fp → .sql (texto plano, legible)
-   f. Descargar ambos via SFTP
-   g. Limpiar archivos temporales del servidor
-4. Rotar backups locales > N dias
-5. Guardar historial en PostgreSQL local
+                         Your PC (Docker)
+                    ┌──────────────────────────┐
+                    │  React Dashboard (:3000)  │
+                    │         ↕ API             │
+                    │  Flask Backend (:5000)    │
+                    │         ↕ SSH             │
+                    └──────────┬───────────────┘
+                               │ VPN + SSH
+                    ┌──────────▼───────────────┐
+                    │  Remote Linux Server      │
+                    │  ├── pg_dump (runs here)  │
+                    │  └── SFTP transfer ↑      │
+                    └──────────────────────────┘
+                               │
+                    ┌──────────▼───────────────┐
+                    │  D:/Backups/PostgreSQL    │
+                    │  ├── db_name_1/           │
+                    │  │   ├── 2026-03-20.backup│
+                    │  │   └── 2026-03-20.sql.gz│
+                    │  ├── db_name_2/           │
+                    │  └── ... (auto-rotated)   │
+                    └──────────────────────────┘
 ```
 
-## Seguridad
+**Backup flow:**
 
-- Nombres de DB validados con `DbName` (regex `[a-zA-Z0-9_]`, max 63 chars)
-- Todos los argumentos de shell escapados con `shlex.quote()`
-- Limpieza de archivos remotos via `SFTP.remove()` (no shell `rm`)
-- Path validation: solo permite borrar dentro de `/tmp/pg_backups/`
-- Credenciales almacenadas en PostgreSQL local, enmascaradas en la UI
-- CORS habilitado, nginx como reverse proxy
+1. Connect to server via SSH (with keepalive every 30s)
+2. List databases (excludes `template0`, `template1`, `postgres`)
+3. For each database:
+   - Query `pg_stat_user_tables` for change stats (I/U/D)
+   - If never backed up → backup (always)
+   - If already backed up → only if changes detected
+   - Generate `.backup` via `pg_dump -Fc`
+   - Generate `.sql.gz` via `pg_dump -Fp | gzip` (optional)
+   - Download via SFTP with real-time progress
+   - Clean up remote temp files
+4. Rotate local backups older than retention period
+5. Save run history to local PostgreSQL
 
-## API Endpoints
+---
 
-| Metodo | Ruta | Descripcion |
+## API
+
+All endpoints return JSON. The frontend communicates exclusively through this API.
+
+| Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/health` | Health check |
-| GET | `/api/status` | Estado de todas las DBs |
-| GET | `/api/history` | Historial de backups |
-| POST | `/api/backup/run` | Iniciar backup (smart o force) |
-| GET | `/api/backup/status` | Estado del backup + progreso |
-| POST | `/api/scan` | Escanear DBs del servidor |
-| GET | `/api/report` | Reporte ejecutivo |
-| GET | `/api/logs` | Logs de la aplicacion |
-| GET | `/api/settings` | Leer configuracion |
-| POST | `/api/settings` | Guardar configuracion |
-| POST | `/api/settings/test-connection` | Probar conexion SSH + PG |
+| `GET` | `/api/health` | Health check + configuration status |
+| `GET` | `/api/status` | All databases with stats, sizes, backup status |
+| `GET` | `/api/history` | Backup run history (last 50 runs) |
+| `POST` | `/api/backup/run` | Start backup (`{ "force": false }`) |
+| `GET` | `/api/backup/status` | Running state + live progress (DB, step, download %) |
+| `POST` | `/api/scan` | Discover databases on remote server |
+| `GET` | `/api/report` | Executive report with KPIs |
+| `GET` | `/api/logs` | Application logs (last 100 lines) |
+| `GET` | `/api/settings` | Current configuration (passwords masked) |
+| `POST` | `/api/settings` | Save configuration + rebuild DI container |
+| `POST` | `/api/settings/test-connection` | Test SSH + PostgreSQL connectivity |
 
-## Screenshots
+---
 
-### Dashboard (Dark Mode)
-- 26 bases de datos monitoreadas
-- Deteccion de cambios en tiempo real (I/U/D)
-- Anillo de cobertura de backup
-- Historial de ejecuciones recientes
+## Configuration
 
-### Settings
-- Configuracion de SSH y PostgreSQL desde la UI
-- Test de conexion integrado
-- Scheduler configurable
+Everything is configurable from the dashboard (**Settings** page):
 
-### Reports
-- Reporte ejecutivo con KPIs
-- Tasa de exito, almacenamiento usado
-- Lista de DBs sin proteccion
-- Boton de impresion
+| Setting | Description | Default |
+|---|---|---|
+| SSH Host | Remote server IP (via VPN) | — |
+| SSH Port | SSH port | `22` |
+| SSH User / Password | SSH credentials | — |
+| PG Host | PostgreSQL host (from server perspective) | `localhost` |
+| PG Port | PostgreSQL port | `5432` |
+| PG User / Password | Database credentials | — |
+| Backup Directory | Local backup path (inside Docker) | `/backups/databases` |
+| Remote Temp Dir | Temp directory on remote server | `/tmp/pg_backups` |
+| Retention Days | Auto-delete backups older than N days | `7` |
+| Schedule Hour/Minute | Daily automatic backup time | `23:00` |
+| Generate SQL | Create `.sql.gz` in addition to `.backup` | `true` |
 
-## Desarrollo local (sin Docker)
+---
+
+## Local Development
 
 ```bash
 # Backend
 cd backend
 python -m venv venv
-source venv/bin/activate  # o venv\Scripts\activate en Windows
+source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env           # Edit LOCAL_DB_URL
 python src/entry_points/api/app.py
 
-# Frontend
+# Frontend (separate terminal)
 cd frontend
 npm install
 npm run dev
 ```
 
-## Proximos pasos
+---
 
-- [ ] Soporte para MySQL, MongoDB, SQL Server
-- [ ] Notificaciones (Slack, email, Telegram)
-- [ ] Backup incremental
-- [ ] Encriptacion de backups en reposo
-- [ ] Autenticacion en el dashboard
-- [ ] Restore desde la UI
+## Roadmap
+
+- [ ] Multi-engine support (MySQL, MongoDB, SQL Server)
+- [ ] Notifications (Slack, Email, Telegram)
+- [ ] Cloud backup destinations (S3, Google Cloud Storage)
+- [ ] Multi-server monitoring from single dashboard
+- [ ] MCP server for AI agent integration
+- [ ] Backup encryption at rest
+- [ ] Authentication & team access
+- [ ] Restore from UI
+- [ ] Incremental backups
 
 ---
 
-Desarrollado con arquitectura hexagonal, buenas practicas de seguridad y mucho cafe.
+## Contributing
+
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+<p align="center">
+  <sub>Built with hexagonal architecture, secure SSH tunnels, and lots of coffee.</sub>
+</p>
