@@ -12,6 +12,7 @@ services:
     volumes:
       - D:/Backups/PostgreSQL:/backups/databases
       - ./logs:/app/logs
+      - ./data:/app/data    # Encryption key stored here
     networks:
       - restorex-net
 

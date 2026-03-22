@@ -7,3 +7,4 @@ gunicorn==23.0.0
 sqlalchemy==2.0.41
 alembic==1.15.2
 psycopg2-binary==2.9.10
+cryptography==44.0.2
