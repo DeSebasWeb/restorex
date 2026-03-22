@@ -41,7 +41,7 @@ Restorex connects to your server via SSH, detects which databases actually chang
 ## Quick Start
 
 ```bash
-git clone https://github.com/DeSebasWeb/backup-manager.git
+git clone https://github.com/DeSebasWeb/restorex.git
 cd backup-manager
 cp backend/.env.example backend/.env    # Edit with your local DB URL
 docker compose up --build -d
