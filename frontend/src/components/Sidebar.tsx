@@ -1,4 +1,4 @@
-import { Database, LayoutDashboard, Clock, FileText, BarChart3, HardDrive, Shield, Settings } from 'lucide-react'
+import { Database, LayoutDashboard, Clock, FileText, BarChart3, Shield, Settings } from 'lucide-react'
 
 interface SidebarProps {
   activeTab: string
@@ -20,12 +20,12 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       {/* Logo */}
       <div className="px-6 py-6">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <HardDrive size={20} className="text-white" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+            <Shield size={20} className="text-white" />
           </div>
           <div className="flex flex-col">
-            <span className="text-[15px] font-bold theme-text tracking-tight">PG Backup</span>
-            <span className="text-[10px] theme-text-faint font-medium tracking-wider uppercase">Manager Pro</span>
+            <span className="text-[15px] font-bold theme-text tracking-tight">Restorex</span>
+            <span className="text-[10px] theme-text-faint font-medium tracking-wider uppercase">Backup Engine</span>
           </div>
         </div>
       </div>
@@ -66,13 +66,13 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         <div className="rounded-xl bg-gradient-to-br from-blue-500/[0.08] to-indigo-500/[0.04] border border-blue-500/10 p-4">
           <div className="flex items-center gap-2 mb-1.5">
             <Shield size={14} className="text-blue-400" />
-            <span className="text-[11px] font-semibold text-blue-400">Secure System</span>
+            <span className="text-[11px] font-semibold text-emerald-400">Secure System</span>
           </div>
           <p className="text-[10px] theme-text-muted leading-relaxed">
-            Hexagonal Architecture with encrypted SSH tunnels and validated operations.
+            Encrypted SSH transfers, validated operations, hexagonal architecture.
           </p>
         </div>
-        <p className="text-center text-[10px] theme-text-faint mt-3">v1.0.0</p>
+        <p className="text-center text-[10px] theme-text-faint mt-3">Restorex v1.0.0</p>
       </div>
     </nav>
   )

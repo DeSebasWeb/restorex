@@ -5,7 +5,7 @@ export type Theme = 'dark' | 'light'
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem('pg-backup-theme') as Theme) || 'dark'
+      return (localStorage.getItem('restorex-theme') as Theme) || 'dark'
     }
     return 'dark'
   })
@@ -13,7 +13,7 @@ export function useTheme() {
   useEffect(() => {
     const root = document.documentElement
     root.setAttribute('data-theme', theme)
-    localStorage.setItem('pg-backup-theme', theme)
+    localStorage.setItem('restorex-theme', theme)
   }, [theme])
 
   const toggleTheme = useCallback(() => {

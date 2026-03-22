@@ -1,7 +1,7 @@
 services:
   backend:
     build: ./backend
-    container_name: pg-backup-api
+    container_name: restorex-api
     restart: unless-stopped
     ports:
       - "5000:5000"
@@ -13,19 +13,19 @@ services:
       - D:/Backups/PostgreSQL:/backups/databases
       - ./logs:/app/logs
     networks:
-      - backup-net
+      - restorex-net
 
   frontend:
     build: ./frontend
-    container_name: pg-backup-ui
+    container_name: restorex-ui
     restart: unless-stopped
     ports:
       - "3000:3000"
     depends_on:
       - backend
     networks:
-      - backup-net
+      - restorex-net
 
 networks:
-  backup-net:
+  restorex-net:
     driver: bridge
