@@ -1,4 +1,4 @@
-import type { StatusResponse, BackupRun, Report, AppSettings, ConnectionTestResult, BackupProgress } from '../types'
+import type { StatusResponse, BackupRun, Report, AppSettings, ConnectionTestResult, BackupProgress, NotificationChannel, NotificationTestResult } from '../types'
 
 const BASE = '/api'
 const REQUEST_TIMEOUT = 30000 // 30 seconds
@@ -70,5 +70,20 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings || {}),
+    }),
+
+  // Notifications
+  getNotifications: () => request<{ channels: NotificationChannel[] }>('/notifications'),
+
+  saveNotification: (channel: string, data: Partial<NotificationChannel>) =>
+    request<{ message: string }>(`/notifications/${channel}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  testNotification: (channel: string) =>
+    request<NotificationTestResult>(`/notifications/${channel}/test`, {
+      method: 'POST',
     }),
 }

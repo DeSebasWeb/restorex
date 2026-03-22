@@ -1,4 +1,4 @@
-import { Database, LayoutDashboard, Clock, FileText, BarChart3, Shield, Settings } from 'lucide-react'
+import { Database, LayoutDashboard, Clock, FileText, BarChart3, Bell, Shield, Settings } from 'lucide-react'
 
 interface SidebarProps {
   activeTab: string
@@ -11,6 +11,7 @@ const navItems = [
   { id: 'history', label: 'History', icon: Clock },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'logs', label: 'Logs', icon: FileText },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 

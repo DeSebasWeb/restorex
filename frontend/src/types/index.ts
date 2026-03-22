@@ -115,3 +115,17 @@ export interface ReportDatabase {
   live_rows: number
   last_backup: LastBackup | null
 }
+
+export interface NotificationChannel {
+  channel: string
+  enabled: boolean
+  on_success: boolean
+  on_failure: boolean
+  on_partial: boolean
+  settings: Record<string, string>
+}
+
+export interface NotificationTestResult {
+  success: boolean
+  message: string
+}
