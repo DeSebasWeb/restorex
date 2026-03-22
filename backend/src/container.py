@@ -5,7 +5,11 @@ in the entire application that knows about concrete implementations.
 Entry points (web, CLI, scheduler) use this container to get services.
 """
 
+import logging
+
 from src.application.services.backup_service import BackupService
+
+logger = logging.getLogger(__name__)
 from src.application.services.report_service import ReportService
 from src.infrastructure.adapters.filesystem_adapter import FilesystemAdapter
 from src.infrastructure.adapters.postgres_adapter import PostgresAdapter
@@ -37,14 +41,15 @@ class Container:
         def _on_progress(db: str, step: str, processed: int, total: int):
             try:
                 self.progress_tracker.update(db, step, processed)
-                # Update total if we now know it
                 if total > 0:
-                    from src.infrastructure.database.engine import session_scope
-                    from src.infrastructure.database.models import BackupProgressModel
-                    with session_scope() as session:
-                        row = session.query(BackupProgressModel).filter_by(id=1).first()
-                        if row and row.total != total:
-                            row.total = total
+                    self.progress_tracker.update_total(total)
+            except Exception as e:
+                logger.warning("Progress update failed: %s", e)
+
+        # Download progress callback: writes to DB so frontend can poll it
+        def _on_download_progress(transferred: int, total: int):
+            try:
+                self.progress_tracker.update_download(transferred, total)
             except Exception:
                 pass
 
@@ -60,7 +65,9 @@ class Container:
             pg_user=Settings.PG_USER,
             pg_password=Settings.PG_PASSWORD,
             remote_tmp_dir=Settings.BACKUP_REMOTE_TMP_DIR,
+            generate_sql=Settings.GENERATE_SQL,
             on_progress=_on_progress,
+            on_download_progress=_on_download_progress,
         )
 
         self.report_service = ReportService(

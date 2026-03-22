@@ -58,11 +58,16 @@ class BackupResultModel(Base):
 
 
 class DbStatsModel(Base):
-    """Change statistics for a database (used for smart change detection)."""
+    """Change statistics for a database.
+
+    source='scan' → saved by scan (for dashboard display only)
+    source='backup' → saved after successful backup (for change detection)
+    """
     __tablename__ = "db_stats"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    db_name = Column(String(128), nullable=False, unique=True)
+    db_name = Column(String(128), nullable=False)
+    source = Column(String(16), nullable=False, default="scan")  # 'scan' or 'backup'
     inserts = Column(BigInteger, nullable=False, default=0)
     updates = Column(BigInteger, nullable=False, default=0)
     deletes = Column(BigInteger, nullable=False, default=0)
@@ -72,7 +77,7 @@ class DbStatsModel(Base):
     saved_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
-        Index("ix_db_stats_db_name", "db_name"),
+        Index("ix_db_stats_db_name_source", "db_name", "source", unique=True),
     )
 
 
@@ -98,4 +103,7 @@ class BackupProgressModel(Base):
     total = Column(Integer, nullable=False, default=0)
     last_completed_db = Column(String(128), nullable=True)
     last_completed_status = Column(String(20), nullable=True)
+    # Download progress
+    download_bytes = Column(BigInteger, nullable=False, default=0)
+    download_total = Column(BigInteger, nullable=False, default=0)
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)

@@ -34,6 +34,8 @@ export interface BackupProgress {
   total: number
   last_completed_db: string | null
   last_completed_status: string | null
+  download_bytes: number
+  download_total: number
   updated_at: string | null
 }
 
@@ -52,6 +54,7 @@ export interface AppSettings {
   RETENTION_DAYS: number | string
   SCHEDULER_HOUR: number | string
   SCHEDULER_MINUTE: number | string
+  GENERATE_SQL: boolean
 }
 
 export interface ConnectionTestResult {

@@ -65,6 +65,7 @@ class Settings:
     BACKUP_LOCAL_DIR: Path = Path("/backups/databases")
     BACKUP_REMOTE_TMP_DIR: str = "/tmp/pg_backups"
     RETENTION_DAYS: int = 7
+    GENERATE_SQL: bool = True  # Generate .sql.gz in addition to .backup
 
     # Scheduler
     SCHEDULER_HOUR: int = 23
@@ -101,6 +102,7 @@ class Settings:
         cls.BACKUP_LOCAL_DIR = Path(_get("BACKUP_LOCAL_DIR", "/backups/databases"))
         cls.BACKUP_REMOTE_TMP_DIR = _get("BACKUP_REMOTE_TMP_DIR", "/tmp/pg_backups")
         cls.RETENTION_DAYS = int(_get("RETENTION_DAYS", "7"))
+        cls.GENERATE_SQL = _get("GENERATE_SQL", "true").lower() in ("true", "1", "yes")
 
         cls.SCHEDULER_HOUR = int(_get("SCHEDULER_HOUR", "23"))
         cls.SCHEDULER_MINUTE = int(_get("SCHEDULER_MINUTE", "0"))
@@ -123,6 +125,7 @@ class Settings:
             "RETENTION_DAYS": cls.RETENTION_DAYS,
             "SCHEDULER_HOUR": cls.SCHEDULER_HOUR,
             "SCHEDULER_MINUTE": cls.SCHEDULER_MINUTE,
+            "GENERATE_SQL": cls.GENERATE_SQL,
         }
 
     @classmethod

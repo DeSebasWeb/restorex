@@ -1,5 +1,6 @@
 """Live backup progress tracker. Writes directly to the database."""
 
+import time
 from datetime import datetime
 
 from src.infrastructure.database.engine import session_scope
@@ -8,6 +9,9 @@ from src.infrastructure.database.models import BackupProgressModel
 
 class ProgressTracker:
     """Updates a single row in backup_progress to track live backup state."""
+
+    def __init__(self):
+        self._last_download_update = 0.0
 
     def start(self, total_dbs: int):
         with session_scope() as session:
@@ -21,6 +25,8 @@ class ProgressTracker:
                 row.total = total_dbs
                 row.last_completed_db = None
                 row.last_completed_status = None
+                row.download_bytes = 0
+                row.download_total = 0
                 row.updated_at = datetime.now()
             else:
                 session.add(BackupProgressModel(
@@ -38,7 +44,33 @@ class ProgressTracker:
                 row.current_db = current_db
                 row.current_step = step
                 row.processed = processed
+                row.download_bytes = 0
+                row.download_total = 0
                 row.updated_at = datetime.now()
+
+    def update_total(self, total: int):
+        """Update the total number of databases."""
+        with session_scope() as session:
+            row = session.query(BackupProgressModel).filter_by(id=1).first()
+            if row and row.total != total:
+                row.total = total
+                row.updated_at = datetime.now()
+
+    def update_download(self, bytes_transferred: int, total_bytes: int):
+        """Update download progress. Throttled to max 1 write per second."""
+        now = time.time()
+        if now - self._last_download_update < 1.0 and bytes_transferred < total_bytes:
+            return
+        self._last_download_update = now
+        try:
+            with session_scope() as session:
+                row = session.query(BackupProgressModel).filter_by(id=1).first()
+                if row:
+                    row.download_bytes = bytes_transferred
+                    row.download_total = total_bytes
+                    row.updated_at = datetime.now()
+        except Exception:
+            pass  # Don't break backup if progress write fails
 
     def complete_db(self, db_name: str, status: str, processed: int):
         with session_scope() as session:
@@ -47,6 +79,8 @@ class ProgressTracker:
                 row.last_completed_db = db_name
                 row.last_completed_status = status
                 row.processed = processed
+                row.download_bytes = 0
+                row.download_total = 0
                 row.updated_at = datetime.now()
 
     def finish(self):
@@ -56,6 +90,8 @@ class ProgressTracker:
                 row.running = False
                 row.current_db = None
                 row.current_step = "Completed"
+                row.download_bytes = 0
+                row.download_total = 0
                 row.updated_at = datetime.now()
 
     @staticmethod
@@ -74,6 +110,8 @@ class ProgressTracker:
                     "total": row.total,
                     "last_completed_db": row.last_completed_db,
                     "last_completed_status": row.last_completed_status,
+                    "download_bytes": row.download_bytes,
+                    "download_total": row.download_total,
                     "updated_at": row.updated_at.isoformat() if row.updated_at else None,
                 }
         except Exception:
