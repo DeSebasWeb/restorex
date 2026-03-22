@@ -210,10 +210,31 @@ def api_run_backup():
         global _backup_running
         tracker = _container.progress_tracker
         try:
-            tracker.start(total_dbs=0)  # Total updated dynamically via on_progress callback
-            _container.backup_service.run_full_backup(force=force)
+            tracker.start(total_dbs=0)
+            summary = _container.backup_service.run_full_backup(force=force)
+
+            # Send notifications for backup result
+            try:
+                _container.notification_service.notify_backup_result(summary.to_dict())
+            except Exception as notify_err:
+                logger.warning("Notification delivery failed: %s", notify_err)
         except Exception as e:
             logger.exception("Backup thread failed: %s", e)
+
+            # Notify about fatal errors (SSH failure, connection lost, etc.)
+            try:
+                _container.notification_service.notify_backup_result({
+                    "backed_up": 0,
+                    "failed": 1,
+                    "skipped": 0,
+                    "total_dbs": 0,
+                    "started_at": "",
+                    "finished_at": "",
+                    "results": [],
+                    "errors": [{"db_name": "SYSTEM", "error": str(e)}],
+                })
+            except Exception:
+                pass  # Don't let notification failure mask the original error
         finally:
             tracker.finish()
             with _backup_lock:
@@ -258,6 +279,39 @@ def api_report():
         return jsonify(report)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ── Notifications ──────────────────────────────────────────────
+
+@app.route("/api/notifications", methods=["GET"])
+def api_get_notifications():
+    try:
+        channels = _container.notification_repository.get_all_channels_masked()
+        return jsonify({"channels": channels})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/notifications/<channel_name>", methods=["POST"])
+def api_save_notification(channel_name: str):
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        _container.notification_repository.save_channel(channel_name, data)
+        return jsonify({"message": f"{channel_name} configuration saved"})
+    except Exception as e:
+        logger.exception("Failed to save notification config")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/notifications/<channel_name>/test", methods=["POST"])
+def api_test_notification(channel_name: str):
+    try:
+        success, message = _container.notification_service.test_channel(channel_name)
+        return jsonify({"success": success, "message": message})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 # ── Logs ────────────────────────────────────────────────────────

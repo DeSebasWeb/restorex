@@ -8,14 +8,16 @@ Entry points (web, CLI, scheduler) use this container to get services.
 import logging
 
 from src.application.services.backup_service import BackupService
+from src.application.services.notification_service import NotificationService
+from src.application.services.report_service import ReportService
 
 logger = logging.getLogger(__name__)
-from src.application.services.report_service import ReportService
 from src.infrastructure.adapters.filesystem_adapter import FilesystemAdapter
 from src.infrastructure.adapters.postgres_adapter import PostgresAdapter
 from src.infrastructure.adapters.ssh_adapter import SSHAdapter
 from src.infrastructure.config import Settings
 from src.infrastructure.persistence.postgres_backup_repository import PostgresBackupRepository
+from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.postgres_settings_repository import PostgresSettingsRepository
 from src.infrastructure.persistence.progress_tracker import ProgressTracker
 
@@ -76,6 +78,12 @@ class Container:
             log_file=Settings.LOG_DIR / "app.log",
             ssh_host=Settings.SSH_HOST,
             retention_days=Settings.RETENTION_DAYS,
+        )
+
+        # Notifications
+        self.notification_repository = NotificationRepository()
+        self.notification_service = NotificationService(
+            repository=self.notification_repository,
         )
 
 
