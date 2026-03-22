@@ -18,7 +18,6 @@ from src.infrastructure.database import init_db
 from src.infrastructure.persistence.postgres_settings_repository import PostgresSettingsRepository
 
 # Force unbuffered output for Docker
-import sys
 sys.stdout.reconfigure(line_buffering=True)
 
 # Logging — set up handlers on the root logger
@@ -85,7 +84,7 @@ def _rebuild():
 def health():
     return jsonify({
         "status": "ok",
-        "service": "pg-backup-api",
+        "service": "restorex-api",
         "configured": Settings.is_configured(),
     })
 
@@ -166,10 +165,12 @@ def api_test_connection():
 def api_status():
     try:
         statuses = _container.report_service.get_all_database_statuses()
+        with _backup_lock:
+            running = _backup_running
         return jsonify({
             "databases": [s.to_dict() for s in statuses],
             "total_dbs": len(statuses),
-            "backup_running": _backup_running,
+            "backup_running": running,
             "retention_days": Settings.RETENTION_DAYS,
             "configured": Settings.is_configured(),
         })
@@ -209,13 +210,12 @@ def api_run_backup():
         global _backup_running
         tracker = _container.progress_tracker
         try:
-            tracker.start(total_dbs=0)
+            tracker.start(total_dbs=0)  # Total updated dynamically via on_progress callback
             _container.backup_service.run_full_backup(force=force)
-            tracker.finish()
         except Exception as e:
-            tracker.finish()
             logger.exception("Backup thread failed: %s", e)
         finally:
+            tracker.finish()
             with _backup_lock:
                 _backup_running = False
 
@@ -227,8 +227,10 @@ def api_run_backup():
 def api_backup_running():
     from src.infrastructure.persistence.progress_tracker import ProgressTracker
     progress = ProgressTracker.get_progress()
+    with _backup_lock:
+        running = _backup_running
     return jsonify({
-        "running": _backup_running,
+        "running": running,
         "progress": progress,
     })
 

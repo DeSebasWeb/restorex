@@ -24,9 +24,15 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current_db, step_description, processed_count, total_count) -> None
 ProgressCallback = Callable[[str, str, int, int], None]
+# Download progress callback type: (bytes_transferred, total_bytes) -> None
+DownloadProgressCallback = Callable[[int, int], None]
 
 
 def _noop_progress(db: str, step: str, processed: int, total: int) -> None:
+    pass
+
+
+def _noop_download(transferred: int, total: int) -> None:
     pass
 
 
@@ -43,7 +49,9 @@ class BackupService:
         pg_user: str,
         pg_password: str,
         remote_tmp_dir: str,
+        generate_sql: bool = True,
         on_progress: ProgressCallback | None = None,
+        on_download_progress: DownloadProgressCallback | None = None,
     ):
         self._executor = executor
         self._inspector = inspector
@@ -55,7 +63,9 @@ class BackupService:
         self._pg_user = pg_user
         self._pg_password = pg_password
         self._remote_tmp_dir = remote_tmp_dir
+        self._generate_sql = generate_sql
         self._on_progress = on_progress or _noop_progress
+        self._on_download_progress = on_download_progress or _noop_download
 
     def scan_databases(self) -> list[dict]:
         """Scan server for databases and their stats. No backup performed."""
@@ -68,7 +78,9 @@ class BackupService:
                 stats = self._inspector.get_change_stats(db_name)
                 size = self._inspector.get_size_pretty(db_name)
 
-                self._repo.save_stats(db_name, stats, size_pretty=size)
+                # Save as 'scan' source — used for dashboard display only.
+                # Change detection uses 'backup' source (saved after successful backups).
+                self._repo.save_stats(db_name, stats, size_pretty=size, source="scan")
 
                 result.append({
                     "name": db_name,
@@ -101,6 +113,10 @@ class BackupService:
                 self._on_progress(db_name, "Checking for changes...", processed, len(databases))
 
                 current_stats = self._inspector.get_change_stats(db_name)
+                size_pretty = self._inspector.get_size_pretty(db_name)
+                # Update scan stats for dashboard display
+                self._repo.save_stats(db_name, current_stats, size_pretty=size_pretty, source="scan")
+                # Get backup stats for change detection
                 saved_stats = self._repo.get_saved_stats(db_name)
                 last_backup = self._repo.get_last_successful_backup(db_name)
 
@@ -131,10 +147,12 @@ class BackupService:
                 processed += 1
                 summary.results.append(result.to_dict())
 
-                if result.status == "success":
+                if result.status in ("success", "partial"):
                     summary.backed_up += 1
                     self._repo.save_stats(db_name, current_stats)
-                    self._on_progress(db_name, f"Done ({self._human_size(result.backup_size + result.sql_size)})", processed, len(databases))
+                    size_label = self._human_size(result.backup_size + result.sql_size)
+                    status_label = "Done" if result.status == "success" else "Partial (.backup OK, .sql failed)"
+                    self._on_progress(db_name, f"{status_label} ({size_label})", processed, len(databases))
                 else:
                     summary.failed += 1
                     summary.errors.append({"db_name": db_name, "error": result.error})
@@ -176,6 +194,8 @@ class BackupService:
 
         result = BackupResultDTO(db_name=safe_name, status="failed", timestamp=timestamp)
         start = time.time()
+        # Track remote files created so we can clean up on failure
+        remote_files_created: list[str] = []
 
         try:
             # Ensure remote temp dir (path comes from config, not user input)
@@ -186,7 +206,11 @@ class BackupService:
             local_backup = None
             local_sql = None
 
-            for fmt in (BackupFormat.CUSTOM, BackupFormat.PLAIN):
+            formats = [BackupFormat.CUSTOM]
+            if self._generate_sql:
+                formats.append(BackupFormat.PLAIN)
+
+            for fmt in formats:
                 filename = f"{safe_name}_{timestamp}{fmt.file_extension}"
                 remote_path = f"{remote_dir}/{filename}"
                 local_path = local_dir / filename
@@ -195,37 +219,61 @@ class BackupService:
                 self._on_progress(safe_name, f"Generating {ext}...", 0, 0)
                 logger.info("Generating %s for %s...", ext, safe_name)
 
-                cmd = (
-                    f"PGPASSWORD={shlex.quote(self._pg_password)} pg_dump "
-                    f"-h {shlex.quote(self._pg_host)} "
-                    f"-p {shlex.quote(str(self._pg_port))} "
-                    f"-U {shlex.quote(self._pg_user)} "
-                    f"{fmt.pg_dump_flag} "
-                    f"-f {shlex.quote(remote_path)} "
-                    f"{shlex.quote(safe_name)}"
-                )
-                _, stderr, code = self._executor.execute(cmd)
+                try:
+                    pg_dump_base = (
+                        f"PGPASSWORD={shlex.quote(self._pg_password)} pg_dump "
+                        f"-h {shlex.quote(self._pg_host)} "
+                        f"-p {shlex.quote(str(self._pg_port))} "
+                        f"-U {shlex.quote(self._pg_user)} "
+                        f"{fmt.pg_dump_flag} "
+                        f"{shlex.quote(safe_name)}"
+                    )
+                    if fmt.needs_pipe_gzip:
+                        cmd = f"{pg_dump_base} | gzip > {shlex.quote(remote_path)}"
+                    else:
+                        cmd = f"{pg_dump_base} -f {shlex.quote(remote_path)}"
 
-                if code != 0:
-                    result.error = f"pg_dump {fmt.name} failed: {stderr}"
-                    logger.error(result.error)
-                    return result
+                    remote_files_created.append(remote_path)
+                    _, stderr, code = self._executor.execute(cmd)
 
-                self._on_progress(safe_name, f"Downloading {ext}...", 0, 0)
-                self._transfer.download(remote_path, local_path)
-                self._transfer.cleanup_remote(remote_path)
+                    if code != 0:
+                        logger.error("pg_dump %s failed for %s: %s", fmt.name, safe_name, stderr)
+                        # Try to clean up the failed remote file
+                        self._safe_cleanup(remote_path)
+                        remote_files_created.remove(remote_path)
 
-                size = local_path.stat().st_size
-                if fmt == BackupFormat.CUSTOM:
-                    backup_size = size
-                    local_backup = str(local_path)
-                else:
-                    sql_size = size
-                    local_sql = str(local_path)
+                        if fmt == BackupFormat.PLAIN and backup_size > 0:
+                            result.error = f".sql generation failed: {stderr}"
+                            continue
+                        result.error = f"pg_dump {fmt.name} failed: {stderr}"
+                        return result
+
+                    remote_size = self._transfer.get_remote_size(remote_path)
+                    self._on_progress(safe_name, f"Downloading {ext} ({self._human_size(remote_size)})...", 0, 0)
+                    self._transfer.download(remote_path, local_path, progress_cb=self._on_download_progress)
+                    self._transfer.cleanup_remote(remote_path)
+                    remote_files_created.remove(remote_path)
+
+                    size = local_path.stat().st_size
+                    if fmt == BackupFormat.CUSTOM:
+                        backup_size = size
+                        local_backup = str(local_path)
+                    else:
+                        sql_size = size
+                        local_sql = str(local_path)
+
+                except Exception as fmt_err:
+                    logger.error("Failed %s for %s: %s", ext, safe_name, fmt_err)
+                    if fmt == BackupFormat.PLAIN and backup_size > 0:
+                        result.error = f".sql failed: {fmt_err}"
+                        continue
+                    raise
 
             duration = round(time.time() - start, 2)
 
-            result.status = "success"
+            # If .backup exists, consider it at least a partial success
+            if backup_size > 0:
+                result.status = "partial" if sql_size == 0 else "success"
             result.backup_file = local_backup
             result.sql_file = local_sql
             result.backup_size = backup_size
@@ -233,7 +281,8 @@ class BackupService:
             result.duration_seconds = duration
 
             logger.info(
-                "OK %s (%.1fs) .backup=%s .sql=%s",
+                "%s %s (%.1fs) .backup=%s .sql=%s",
+                "PARTIAL" if result.status == "partial" else "OK",
                 safe_name, duration,
                 self._human_size(backup_size),
                 self._human_size(sql_size),
@@ -243,8 +292,18 @@ class BackupService:
             result.error = str(e)
             result.duration_seconds = round(time.time() - start, 2)
             logger.exception("Backup failed for %s", safe_name)
+            # Clean up any leftover remote temp files
+            for rpath in remote_files_created:
+                self._safe_cleanup(rpath)
 
         return result
+
+    def _safe_cleanup(self, remote_path: str) -> None:
+        """Attempt to clean up a remote file, logging but not raising on failure."""
+        try:
+            self._transfer.cleanup_remote(remote_path)
+        except Exception as cleanup_err:
+            logger.warning("Could not clean up remote file %s: %s", remote_path, cleanup_err)
 
     @staticmethod
     def _human_size(n: int) -> str:
