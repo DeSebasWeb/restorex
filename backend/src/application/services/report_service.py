@@ -11,6 +11,7 @@ from pathlib import Path
 from src.application.dto.database_status import DatabaseStatusDTO
 from src.domain.ports.backup_repository import BackupRepository
 from src.domain.ports.filesystem import Filesystem
+from src.domain.value_objects.db_change_stats import DbChangeStats
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,34 @@ class ReportService:
         self._retention_days = retention_days
 
     def get_all_database_statuses(self) -> list[DatabaseStatusDTO]:
-        """Build the status list for the dashboard."""
+        """Build the status list for the dashboard.
+
+        Compares current scan stats vs last backup stats to determine
+        if each database needs a new backup.
+        """
         stats = self._repo.get_all_stats()
         history = self._repo.get_history(limit=100)
 
         statuses = []
         for db_name, db_stats in sorted(stats.items()):
             last_backup = self._find_last_backup(db_name, history)
+
+            # Determine if backup is needed by comparing scan vs backup stats
+            needs_backup = True  # Default: needs backup
+            if last_backup is not None:
+                # Has a previous backup — check if stats changed
+                saved_stats = self._repo.get_saved_stats(db_name)
+                if saved_stats is not None:
+                    current_scan = DbChangeStats(
+                        inserts=db_stats.get("inserts", 0),
+                        updates=db_stats.get("updates", 0),
+                        deletes=db_stats.get("deletes", 0),
+                        live_rows=db_stats.get("live_rows", 0),
+                        table_count=db_stats.get("table_count", 0),
+                    )
+                    needs_backup = current_scan.has_changed_since(saved_stats)
+                # If no saved backup stats, needs_backup stays True
+
             statuses.append(DatabaseStatusDTO(
                 name=db_name,
                 size=db_stats.get("size", "Unknown"),
@@ -48,6 +70,7 @@ class ReportService:
                 deletes=db_stats.get("deletes", 0),
                 last_checked=db_stats.get("saved_at"),
                 last_backup=last_backup,
+                needs_backup=needs_backup,
             ))
 
         return statuses
@@ -100,7 +123,7 @@ class ReportService:
     def _find_last_backup(db_name: str, history: list[dict]) -> dict | None:
         for run in history:
             for result in run.get("results", []):
-                if result.get("db_name") == db_name and result.get("status") == "success":
+                if result.get("db_name") == db_name and result.get("status") in ("success", "partial"):
                     return {
                         "timestamp": result.get("timestamp"),
                         "backup_size": result.get("backup_size", 0),

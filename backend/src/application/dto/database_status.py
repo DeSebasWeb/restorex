@@ -14,6 +14,7 @@ class DatabaseStatusDTO:
     deletes: int
     last_checked: str | None
     last_backup: dict | None
+    needs_backup: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -26,4 +27,5 @@ class DatabaseStatusDTO:
             "deletes": self.deletes,
             "last_checked": self.last_checked,
             "last_backup": self.last_backup,
+            "needs_backup": self.needs_backup,
         }

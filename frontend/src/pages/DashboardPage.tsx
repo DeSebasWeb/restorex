@@ -13,8 +13,8 @@ interface Props {
 }
 
 export function DashboardPage({ databases, history, backupRunning }: Props) {
-  const backedUp = databases.filter(d => d.last_backup !== null).length
-  const pending = databases.filter(d => d.last_backup === null).length
+  const backedUp = databases.filter(d => d.last_backup !== null && !d.needs_backup).length
+  const pending = databases.filter(d => d.last_backup === null || d.needs_backup).length
   const totalRows = databases.reduce((acc, d) => acc + d.live_rows, 0)
   const recentRuns = history.slice(0, 8)
   const lastRun = history[0] ?? null
@@ -144,11 +144,10 @@ export function DashboardPage({ databases, history, backupRunning }: Props) {
                 </tr>
               ) : (
                 databases.map(db => {
-                  const totalChanges = db.inserts + db.updates + db.deletes
                   return (
                     <tr key={db.name} className="theme-hover transition-colors">
                       <td className="px-4 py-3 w-8">
-                        <StatusDot status={db.last_backup ? 'green' : 'gray'} />
+                        <StatusDot status={db.last_backup && !db.needs_backup ? 'green' : db.needs_backup ? 'yellow' : 'gray'} />
                       </td>
                       <td className="px-4 py-3">
                         <span className="font-semibold theme-text-secondary">{db.name}</span>
@@ -178,9 +177,9 @@ export function DashboardPage({ databases, history, backupRunning }: Props) {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {db.last_backup ? (
+                        {db.last_backup && !db.needs_backup ? (
                           <StatusDot status="green" label="Protected" />
-                        ) : totalChanges > 0 ? (
+                        ) : db.needs_backup ? (
                           <StatusDot status="yellow" label="Needs Backup" />
                         ) : (
                           <StatusDot status="gray" label="No Data" />

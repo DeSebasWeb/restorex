@@ -104,7 +104,7 @@ class PostgresBackupRepository(BackupRepository):
                 session.query(BackupResultModel)
                 .filter(
                     BackupResultModel.db_name == db_name,
-                    BackupResultModel.status == "success",
+                    BackupResultModel.status.in_(["success", "partial"]),
                 )
                 .order_by(BackupResultModel.id.desc())
                 .first()
