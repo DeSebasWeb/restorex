@@ -233,6 +233,28 @@ export function SettingsPage() {
             </div>
           </label>
         </div>
+
+        <div className="pt-3 border-t theme-border">
+          <label className="text-xs font-semibold theme-text-tertiary uppercase tracking-wider">
+            Parallel Workers
+          </label>
+          <div className="flex items-center gap-4 mt-2">
+            <input
+              type="range"
+              min="1"
+              max="10"
+              value={Number(settings.PARALLEL_WORKERS) || 3}
+              onChange={e => setSettings({ ...settings, PARALLEL_WORKERS: Number(e.target.value) })}
+              className="flex-1 h-2 rounded-full appearance-none bg-slate-600/30 accent-blue-500"
+            />
+            <span className="text-sm font-bold text-blue-400 w-6 text-center">
+              {Number(settings.PARALLEL_WORKERS) || 3}
+            </span>
+          </div>
+          <p className="text-[10px] theme-text-faint mt-1">
+            Number of databases to backup simultaneously. Higher values = faster but more server load.
+          </p>
+        </div>
       </div>
 
       {/* Scheduler Section */}

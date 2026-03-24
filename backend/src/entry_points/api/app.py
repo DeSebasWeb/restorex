@@ -95,6 +95,18 @@ def health():
 def api_get_settings():
     try:
         masked = _settings_repo.get_all_masked(Settings.get_env_defaults())
+        # Normalize types: DB stores everything as strings, frontend expects correct types
+        _bool_keys = {"GENERATE_SQL"}
+        _int_keys = {"SSH_PORT", "PG_PORT", "RETENTION_DAYS", "SCHEDULER_HOUR", "SCHEDULER_MINUTE", "PARALLEL_WORKERS"}
+        for k in _bool_keys:
+            if k in masked and isinstance(masked[k], str):
+                masked[k] = masked[k].lower() in ("true", "1", "yes")
+        for k in _int_keys:
+            if k in masked:
+                try:
+                    masked[k] = int(masked[k])
+                except (ValueError, TypeError):
+                    pass
         return jsonify({
             "settings": masked,
             "configured": Settings.is_configured(),
