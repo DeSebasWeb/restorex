@@ -8,6 +8,7 @@ export interface DatabaseStatus {
   deletes: number
   last_checked: string | null
   last_backup: LastBackup | null
+  needs_backup: boolean
 }
 
 export interface LastBackup {
@@ -36,7 +37,15 @@ export interface BackupProgress {
   last_completed_status: string | null
   download_bytes: number
   download_total: number
+  active_jobs: ActiveJob[]
   updated_at: string | null
+}
+
+export interface ActiveJob {
+  db: string
+  step: string
+  download_bytes: number
+  download_total: number
 }
 
 export interface AppSettings {
@@ -55,6 +64,7 @@ export interface AppSettings {
   SCHEDULER_HOUR: number | string
   SCHEDULER_MINUTE: number | string
   GENERATE_SQL: boolean
+  PARALLEL_WORKERS: number | string
 }
 
 export interface ConnectionTestResult {

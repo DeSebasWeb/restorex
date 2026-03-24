@@ -66,6 +66,7 @@ class Settings:
     BACKUP_REMOTE_TMP_DIR: str = "/tmp/pg_backups"
     RETENTION_DAYS: int = 7
     GENERATE_SQL: bool = True  # Generate .sql.gz in addition to .backup
+    PARALLEL_WORKERS: int = 3  # Number of concurrent backup jobs
 
     # Scheduler
     SCHEDULER_HOUR: int = 23
@@ -103,6 +104,7 @@ class Settings:
         cls.BACKUP_REMOTE_TMP_DIR = _get("BACKUP_REMOTE_TMP_DIR", "/tmp/pg_backups")
         cls.RETENTION_DAYS = int(_get("RETENTION_DAYS", "7"))
         cls.GENERATE_SQL = _get("GENERATE_SQL", "true").lower() in ("true", "1", "yes")
+        cls.PARALLEL_WORKERS = max(1, min(10, int(_get("PARALLEL_WORKERS", "3"))))
 
         cls.SCHEDULER_HOUR = int(_get("SCHEDULER_HOUR", "23"))
         cls.SCHEDULER_MINUTE = int(_get("SCHEDULER_MINUTE", "0"))
@@ -126,6 +128,7 @@ class Settings:
             "SCHEDULER_HOUR": cls.SCHEDULER_HOUR,
             "SCHEDULER_MINUTE": cls.SCHEDULER_MINUTE,
             "GENERATE_SQL": cls.GENERATE_SQL,
+            "PARALLEL_WORKERS": cls.PARALLEL_WORKERS,
         }
 
     @classmethod

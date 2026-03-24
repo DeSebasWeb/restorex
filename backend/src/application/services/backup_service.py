@@ -2,11 +2,16 @@
 
 This is the main use case. It depends ONLY on domain ports (interfaces),
 never on concrete infrastructure. Dependencies are injected.
+
+Supports parallel backup execution via ThreadPoolExecutor. Each parallel
+job gets its own SSH connection (via executor_factory) for thread safety.
 """
 
 import logging
 import shlex
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Callable
 
@@ -22,17 +27,19 @@ from src.domain.value_objects.db_name import DbName
 
 logger = logging.getLogger(__name__)
 
-# Progress callback type: (current_db, step_description, processed_count, total_count) -> None
+# Callback types
 ProgressCallback = Callable[[str, str, int, int], None]
-# Download progress callback type: (bytes_transferred, total_bytes) -> None
-DownloadProgressCallback = Callable[[int, int], None]
+# Job-level callbacks for parallel mode
+JobProgressCallback = Callable[[str, str, int, int], None]
+JobDownloadCallback = Callable[[str, int, int], None]
+
+# Factory types: create new instances per thread
+ExecutorFactory = Callable[[], RemoteExecutor]
+InspectorFactory = Callable[[RemoteExecutor], DatabaseInspector]
+TransferFactory = Callable[[RemoteExecutor], FileTransfer]
 
 
 def _noop_progress(db: str, step: str, processed: int, total: int) -> None:
-    pass
-
-
-def _noop_download(transferred: int, total: int) -> None:
     pass
 
 
@@ -50,8 +57,13 @@ class BackupService:
         pg_password: str,
         remote_tmp_dir: str,
         generate_sql: bool = True,
+        parallel_workers: int = 1,
+        executor_factory: ExecutorFactory | None = None,
+        inspector_factory: InspectorFactory | None = None,
+        transfer_factory: TransferFactory | None = None,
         on_progress: ProgressCallback | None = None,
-        on_download_progress: DownloadProgressCallback | None = None,
+        on_job_progress: JobProgressCallback | None = None,
+        on_job_download: JobDownloadCallback | None = None,
     ):
         self._executor = executor
         self._inspector = inspector
@@ -64,8 +76,15 @@ class BackupService:
         self._pg_password = pg_password
         self._remote_tmp_dir = remote_tmp_dir
         self._generate_sql = generate_sql
+        self._parallel_workers = max(1, parallel_workers)
+        self._executor_factory = executor_factory
+        self._inspector_factory = inspector_factory
+        self._transfer_factory = transfer_factory
         self._on_progress = on_progress or _noop_progress
-        self._on_download_progress = on_download_progress or _noop_download
+        self._on_job_progress = on_job_progress or _noop_progress
+        self._on_job_download = on_job_download or (lambda db, t, tot: None)
+        self._processed_lock = threading.Lock()
+        self._processed_count = 0
 
     def scan_databases(self) -> list[dict]:
         """Scan server for databases and their stats. No backup performed."""
@@ -77,11 +96,7 @@ class BackupService:
             for db_name in databases:
                 stats = self._inspector.get_change_stats(db_name)
                 size = self._inspector.get_size_pretty(db_name)
-
-                # Save as 'scan' source — used for dashboard display only.
-                # Change detection uses 'backup' source (saved after successful backups).
                 self._repo.save_stats(db_name, stats, size_pretty=size, source="scan")
-
                 result.append({
                     "name": db_name,
                     "size": size,
@@ -98,9 +113,15 @@ class BackupService:
             self._executor.disconnect()
 
     def run_full_backup(self, force: bool = False) -> BackupSummaryDTO:
-        """Execute the full backup workflow for all databases."""
-        summary = BackupSummaryDTO(started_at=datetime.now().isoformat())
+        """Execute the full backup workflow for all databases.
 
+        When parallel_workers > 1 and executor_factory is provided,
+        databases are backed up concurrently using a thread pool.
+        """
+        summary = BackupSummaryDTO(started_at=datetime.now().isoformat())
+        self._processed_count = 0
+
+        # Phase 1: Scan (sequential — single connection)
         self._executor.connect()
         try:
             databases = self._inspector.list_databases()
@@ -108,66 +129,67 @@ class BackupService:
             logger.info("Found %d databases to evaluate.", len(databases))
             self._on_progress("", f"Found {len(databases)} databases", 0, len(databases))
 
-            processed = 0
+            # Determine which DBs need backup
+            dbs_to_backup = []
+            dbs_to_skip = []
             for db_name in databases:
-                self._on_progress(db_name, "Checking for changes...", processed, len(databases))
-
                 current_stats = self._inspector.get_change_stats(db_name)
                 size_pretty = self._inspector.get_size_pretty(db_name)
-                # Update scan stats for dashboard display
                 self._repo.save_stats(db_name, current_stats, size_pretty=size_pretty, source="scan")
-                # Get backup stats for change detection
+
                 saved_stats = self._repo.get_saved_stats(db_name)
                 last_backup = self._repo.get_last_successful_backup(db_name)
-
                 never_backed_up = last_backup is None
                 has_changes = saved_stats is None or current_stats.has_changed_since(saved_stats)
-
                 needs_backup = force or never_backed_up or has_changes
 
-                if not needs_backup:
-                    logger.info("Skipping %s — no changes since last backup.", db_name)
-                    processed += 1
-                    summary.skipped += 1
-                    summary.results.append(
-                        BackupResultDTO(
-                            db_name=db_name,
-                            status="skipped",
-                            reason="No changes since last backup",
-                        ).to_dict()
-                    )
-                    self._on_progress(db_name, "Skipped (no changes)", processed, len(databases))
-                    continue
-
-                reason = "forced" if force else ("first backup" if never_backed_up else "changes detected")
-                logger.info("Backing up %s — %s.", db_name, reason)
-                self._on_progress(db_name, f"Backing up ({reason})...", processed, len(databases))
-
-                result = self._backup_single_db(db_name)
-                processed += 1
-                summary.results.append(result.to_dict())
-
-                if result.status in ("success", "partial"):
-                    summary.backed_up += 1
-                    self._repo.save_stats(db_name, current_stats)
-                    size_label = self._human_size(result.backup_size + result.sql_size)
-                    status_label = "Done" if result.status == "success" else "Partial (.backup OK, .sql failed)"
-                    self._on_progress(db_name, f"{status_label} ({size_label})", processed, len(databases))
+                if needs_backup:
+                    reason = "forced" if force else ("first backup" if never_backed_up else "changes detected")
+                    dbs_to_backup.append((db_name, current_stats, reason))
                 else:
-                    summary.failed += 1
-                    summary.errors.append({"db_name": db_name, "error": result.error})
-                    self._on_progress(db_name, f"Failed: {result.error}", processed, len(databases))
+                    dbs_to_skip.append(db_name)
+        finally:
+            self._executor.disconnect()
 
+        # Record skipped DBs
+        for db_name in dbs_to_skip:
+            summary.skipped += 1
+            summary.results.append(
+                BackupResultDTO(
+                    db_name=db_name,
+                    status="skipped",
+                    reason="No changes since last backup",
+                ).to_dict()
+            )
+
+        total_to_process = len(dbs_to_backup)
+        total_all = total_to_process + len(dbs_to_skip)
+        self._on_progress("", f"{total_to_process} databases need backup, {len(dbs_to_skip)} skipped", 0, total_to_process)
+
+        if not dbs_to_backup:
+            summary.finished_at = datetime.now().isoformat()
+            self._repo.save_run_summary(summary.to_dict())
+            return summary
+
+        # Phase 2: Backup (parallel or sequential)
+        use_parallel = (
+            self._parallel_workers > 1
+            and self._executor_factory is not None
+            and len(dbs_to_backup) > 1
+        )
+
+        if use_parallel:
+            self._run_parallel_backup(dbs_to_backup, total_to_process, summary)
+        else:
+            self._run_sequential_backup(dbs_to_backup, total_to_process, summary)
+
+        # Phase 3: Cleanup
+        try:
             removed = self._fs.rotate_old_backups()
             if removed:
                 logger.info("Rotated %d old backup files.", removed)
-
         except Exception as e:
-            logger.exception("Fatal error during backup run.")
-            summary.errors.append({"db_name": "GLOBAL", "error": str(e)})
-
-        finally:
-            self._executor.disconnect()
+            logger.warning("Rotation failed: %s", e)
 
         summary.finished_at = datetime.now().isoformat()
         self._repo.save_run_summary(summary.to_dict())
@@ -178,13 +200,127 @@ class BackupService:
         )
         return summary
 
-    def _backup_single_db(self, db_name: str) -> BackupResultDTO:
+    def _run_sequential_backup(
+        self,
+        dbs_to_backup: list[tuple],
+        total: int,
+        summary: BackupSummaryDTO,
+    ):
+        """Backup databases one by one using the shared connection."""
+        self._executor.connect()
+        try:
+            for i, (db_name, current_stats, reason) in enumerate(dbs_to_backup):
+                logger.info("Backing up %s — %s.", db_name, reason)
+                self._on_progress(db_name, f"Backing up ({reason})...", i, total)
+                self._on_job_progress(db_name, f"Backing up ({reason})...", i, total)
+
+                result = self._backup_single_db(
+                    db_name, self._executor, self._transfer,
+                    download_cb=lambda t, tot: self._on_job_download(db_name, t, tot),
+                )
+                self._record_result(result, db_name, current_stats, i + 1, total, summary)
+        except Exception as e:
+            logger.exception("Fatal error during sequential backup.")
+            summary.errors.append({"db_name": "GLOBAL", "error": str(e)})
+        finally:
+            self._executor.disconnect()
+
+    def _run_parallel_backup(
+        self,
+        dbs_to_backup: list[tuple],
+        total: int,
+        summary: BackupSummaryDTO,
+    ):
+        """Backup databases concurrently. Each thread gets its own SSH connection."""
+        workers = min(self._parallel_workers, len(dbs_to_backup))
+        logger.info("Starting parallel backup with %d workers for %d databases.", workers, len(dbs_to_backup))
+
+        summary_lock = threading.Lock()
+
+        def _backup_worker(db_name: str, current_stats, reason: str) -> tuple[str, BackupResultDTO, object]:
+            """Worker function: creates its own SSH connection, runs backup, disconnects."""
+            executor = self._executor_factory()
+            inspector = self._inspector_factory(executor) if self._inspector_factory else None
+            transfer = self._transfer_factory(executor) if self._transfer_factory else executor
+
+            self._on_job_progress(db_name, f"Connecting ({reason})...", 0, 0)
+            executor.connect()
+            try:
+                self._on_job_progress(db_name, f"Backing up ({reason})...", 0, 0)
+
+                def _download_cb(transferred: int, total_bytes: int):
+                    self._on_job_download(db_name, transferred, total_bytes)
+
+                result = self._backup_single_db(db_name, executor, transfer, download_cb=_download_cb)
+                return db_name, result, current_stats
+            except Exception as e:
+                logger.exception("Worker failed for %s", db_name)
+                return db_name, BackupResultDTO(db_name=db_name, status="failed", error=str(e)), current_stats
+            finally:
+                try:
+                    executor.disconnect()
+                except Exception:
+                    pass
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for db_name, current_stats, reason in dbs_to_backup:
+                future = pool.submit(_backup_worker, db_name, current_stats, reason)
+                futures[future] = db_name
+
+            for future in as_completed(futures):
+                try:
+                    db_name, result, current_stats = future.result()
+                except Exception as e:
+                    db_name = futures[future]
+                    result = BackupResultDTO(db_name=db_name, status="failed", error=str(e))
+                    current_stats = None
+
+                with self._processed_lock:
+                    self._processed_count += 1
+                    processed = self._processed_count
+
+                with summary_lock:
+                    self._record_result(result, db_name, current_stats, processed, total, summary)
+
+    def _record_result(
+        self,
+        result: BackupResultDTO,
+        db_name: str,
+        current_stats,
+        processed: int,
+        total: int,
+        summary: BackupSummaryDTO,
+    ):
+        """Record a backup result into the summary and update progress."""
+        summary.results.append(result.to_dict())
+
+        if result.status in ("success", "partial"):
+            summary.backed_up += 1
+            if current_stats is not None:
+                self._repo.save_stats(db_name, current_stats)
+            size_label = self._human_size(result.backup_size + result.sql_size)
+            status_label = "Done" if result.status == "success" else "Partial"
+            self._on_progress(db_name, f"{status_label} ({size_label})", processed, total)
+            self._on_job_progress(db_name, f"{status_label} ({size_label})", processed, total)
+        else:
+            summary.failed += 1
+            summary.errors.append({"db_name": db_name, "error": result.error})
+            self._on_progress(db_name, f"Failed: {result.error}", processed, total)
+            self._on_job_progress(db_name, f"Failed: {result.error}", processed, total)
+
+    def _backup_single_db(
+        self,
+        db_name: str,
+        executor: RemoteExecutor,
+        transfer: FileTransfer,
+        download_cb: Callable[[int, int], None] | None = None,
+    ) -> BackupResultDTO:
         """Generate .backup + .sql for a single database and download.
 
         SECURITY: db_name is validated, all shell arguments are quoted.
         Only temporary files in remote_tmp_dir are created/deleted.
         """
-        # Validate database name (defense in depth — already validated by inspector)
         validated_name = DbName(db_name)
         safe_name = validated_name.value
 
@@ -194,12 +330,12 @@ class BackupService:
 
         result = BackupResultDTO(db_name=safe_name, status="failed", timestamp=timestamp)
         start = time.time()
-        # Track remote files created so we can clean up on failure
         remote_files_created: list[str] = []
 
+        _download_cb = download_cb or (lambda t, tot: None)
+
         try:
-            # Ensure remote temp dir (path comes from config, not user input)
-            self._executor.execute(f"mkdir -p {shlex.quote(remote_dir)}")
+            executor.execute(f"mkdir -p {shlex.quote(remote_dir)}")
 
             backup_size = 0
             sql_size = 0
@@ -214,9 +350,9 @@ class BackupService:
                 filename = f"{safe_name}_{timestamp}{fmt.file_extension}"
                 remote_path = f"{remote_dir}/{filename}"
                 local_path = local_dir / filename
-
                 ext = fmt.file_extension
-                self._on_progress(safe_name, f"Generating {ext}...", 0, 0)
+
+                self._on_job_progress(safe_name, f"Generating {ext}...", 0, 0)
                 logger.info("Generating %s for %s...", ext, safe_name)
 
                 try:
@@ -234,24 +370,22 @@ class BackupService:
                         cmd = f"{pg_dump_base} -f {shlex.quote(remote_path)}"
 
                     remote_files_created.append(remote_path)
-                    _, stderr, code = self._executor.execute(cmd)
+                    _, stderr, code = executor.execute(cmd)
 
                     if code != 0:
                         logger.error("pg_dump %s failed for %s: %s", fmt.name, safe_name, stderr)
-                        # Try to clean up the failed remote file
-                        self._safe_cleanup(remote_path)
+                        self._safe_cleanup(transfer, remote_path)
                         remote_files_created.remove(remote_path)
-
                         if fmt == BackupFormat.PLAIN and backup_size > 0:
                             result.error = f".sql generation failed: {stderr}"
                             continue
                         result.error = f"pg_dump {fmt.name} failed: {stderr}"
                         return result
 
-                    remote_size = self._transfer.get_remote_size(remote_path)
-                    self._on_progress(safe_name, f"Downloading {ext} ({self._human_size(remote_size)})...", 0, 0)
-                    self._transfer.download(remote_path, local_path, progress_cb=self._on_download_progress)
-                    self._transfer.cleanup_remote(remote_path)
+                    remote_size = transfer.get_remote_size(remote_path)
+                    self._on_job_progress(safe_name, f"Downloading {ext} ({self._human_size(remote_size)})...", 0, 0)
+                    transfer.download(remote_path, local_path, progress_cb=_download_cb)
+                    transfer.cleanup_remote(remote_path)
                     remote_files_created.remove(remote_path)
 
                     size = local_path.stat().st_size
@@ -271,9 +405,12 @@ class BackupService:
 
             duration = round(time.time() - start, 2)
 
-            # If .backup exists, consider it at least a partial success
             if backup_size > 0:
-                result.status = "partial" if sql_size == 0 else "success"
+                # "partial" only when SQL was requested but failed
+                if sql_size == 0 and self._generate_sql:
+                    result.status = "partial"
+                else:
+                    result.status = "success"
             result.backup_file = local_backup
             result.sql_file = local_sql
             result.backup_size = backup_size
@@ -292,16 +429,15 @@ class BackupService:
             result.error = str(e)
             result.duration_seconds = round(time.time() - start, 2)
             logger.exception("Backup failed for %s", safe_name)
-            # Clean up any leftover remote temp files
             for rpath in remote_files_created:
-                self._safe_cleanup(rpath)
+                self._safe_cleanup(transfer, rpath)
 
         return result
 
-    def _safe_cleanup(self, remote_path: str) -> None:
-        """Attempt to clean up a remote file, logging but not raising on failure."""
+    @staticmethod
+    def _safe_cleanup(transfer: FileTransfer, remote_path: str) -> None:
         try:
-            self._transfer.cleanup_remote(remote_path)
+            transfer.cleanup_remote(remote_path)
         except Exception as cleanup_err:
             logger.warning("Could not clean up remote file %s: %s", remote_path, cleanup_err)
 
