@@ -42,7 +42,7 @@ Restorex connects to your server via SSH, detects which databases actually chang
 
 ```bash
 git clone https://github.com/DeSebasWeb/restorex.git
-cd backup-manager
+cd restorex
 cp backend/.env.example backend/.env    # Edit with your local DB URL
 docker compose up --build -d
 ```
@@ -72,16 +72,25 @@ Built-in APScheduler runs backups daily at your configured time. Manual backup a
 ### Executive Reports
 Generate reports with KPIs: success rate, storage used, databases without protection. Print-ready for management presentations.
 
+### Notifications (Slack, Email, Telegram)
+Get notified on every backup run. Configure per-channel: choose to receive alerts on success, failure, or partial results. Test notifications with one click from the UI.
+
+### Parallel Backups
+Backup multiple databases simultaneously. Configurable worker count (1–8) from Settings. Reduces total backup time significantly for large fleets.
+
+### Encrypted Credentials
+All sensitive credentials (SSH passwords, PG passwords, API tokens) are encrypted at rest using **Fernet AES-256**. Encryption key auto-generated on first boot and persisted outside the container.
+
 ### Secure by Design
 - SSH tunnels with host key verification (saved to `known_hosts`)
 - All shell arguments escaped with `shlex.quote()`
 - Remote file cleanup via SFTP (not shell `rm`)
 - Path validation — only deletes inside `/tmp/pg_backups/`
 - Database names validated with `DbName` value object (regex, max 63 chars)
-- Credentials stored in local PostgreSQL, masked in UI
+- Credentials encrypted at rest, masked in UI
 
 ### Full Configuration from UI
-No need to edit `.env` files. Configure SSH, PostgreSQL, backup directory, retention days, schedule time, and SQL generation — all from the Settings page. Test connection with one click.
+No need to edit `.env` files. Configure SSH, PostgreSQL, backup directory, retention days, schedule time, parallel workers, and SQL generation — all from the Settings page. Test connection with one click.
 
 ---
 
@@ -94,19 +103,21 @@ backend/src/
 ├── domain/                    # Business core — 0 dependencies
 │   ├── entities/              # BackupRecord, DatabaseInfo
 │   ├── ports/                 # Interfaces (RemoteExecutor, FileTransfer,
-│   │                          #   DatabaseInspector, Filesystem, BackupRepository)
+│   │                          #   DatabaseInspector, BackupRepository, NotificationSender)
 │   ├── value_objects/         # BackupFormat, DbChangeStats, DbName
 │   └── exceptions.py
 │
 ├── application/               # Use cases — depends only on domain
-│   ├── services/              # BackupService, ReportService
+│   ├── services/              # BackupService, ReportService, NotificationService
 │   └── dto/                   # BackupResultDTO, BackupSummaryDTO, DatabaseStatusDTO
 │
 ├── infrastructure/            # Output adapters — implements ports
-│   ├── adapters/              # SSHAdapter, PostgresAdapter, FilesystemAdapter
-│   ├── database/              # SQLAlchemy models, engine, auto-migrations
+│   ├── adapters/              # SSHAdapter, PostgresAdapter, FilesystemAdapter,
+│   │                          #   SlackNotifier, EmailNotifier, TelegramNotifier
+│   ├── database/models/       # One file per SQLAlchemy model (SRP)
 │   ├── persistence/           # PostgresBackupRepository, SettingsRepository,
-│   │                          #   ProgressTracker
+│   │                          #   ProgressTracker, NotificationRepository
+│   ├── security/              # Fernet AES encryption service
 │   └── config.py              # Settings (DB > .env > defaults)
 │
 ├── entry_points/              # Input adapters
@@ -119,7 +130,8 @@ backend/src/
 frontend/src/
 ├── components/                # Sidebar, TopBar, StatCard, ProgressRing,
 │                              #   BackupProgressBar, StatusDot, Toast
-├── pages/                     # Dashboard, Databases, History, Reports, Logs, Settings
+├── pages/                     # Dashboard, Databases, History, Reports, Logs,
+│                              #   Notifications, Settings
 ├── hooks/                     # useBackupStatus, useTheme
 ├── services/api.ts            # Typed HTTP client with timeout + error handling
 ├── types/index.ts             # TypeScript interfaces
@@ -201,6 +213,9 @@ All endpoints return JSON. The frontend communicates exclusively through this AP
 | `GET` | `/api/settings` | Current configuration (passwords masked) |
 | `POST` | `/api/settings` | Save configuration + rebuild DI container |
 | `POST` | `/api/settings/test-connection` | Test SSH + PostgreSQL connectivity |
+| `GET` | `/api/notifications` | Get notification channel configs |
+| `POST` | `/api/notifications` | Save notification channel config |
+| `POST` | `/api/notifications/:channel/test` | Send test notification |
 
 ---
 
@@ -221,6 +236,7 @@ Everything is configurable from the dashboard (**Settings** page):
 | Retention Days | Auto-delete backups older than N days | `7` |
 | Schedule Hour/Minute | Daily automatic backup time | `23:00` |
 | Generate SQL | Create `.sql.gz` in addition to `.backup` | `true` |
+| Parallel Workers | Number of concurrent backup jobs (1–8) | `3` |
 
 ---
 
@@ -245,12 +261,13 @@ npm run dev
 
 ## Roadmap
 
+- [x] Notifications (Slack, Email, Telegram)
+- [x] Parallel backups (configurable workers)
+- [x] Credential encryption at rest (Fernet AES)
 - [ ] Multi-engine support (MySQL, MongoDB, SQL Server)
-- [ ] Notifications (Slack, Email, Telegram)
+- [ ] MCP server for AI agent integration
 - [ ] Cloud backup destinations (S3, Google Cloud Storage)
 - [ ] Multi-server monitoring from single dashboard
-- [ ] MCP server for AI agent integration
-- [ ] Backup encryption at rest
 - [ ] Authentication & team access
 - [ ] Restore from UI
 - [ ] Incremental backups
