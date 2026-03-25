@@ -21,9 +21,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       {/* Logo */}
       <div className="px-6 py-6">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-            <Shield size={20} className="text-white" />
-          </div>
+          <img src="/logo.png" alt="Restorex" className="w-10 h-10 rounded-xl shadow-lg shadow-emerald-500/20" />
           <div className="flex flex-col">
             <span className="text-[15px] font-bold theme-text tracking-tight">Restorex</span>
             <span className="text-[10px] theme-text-faint font-medium tracking-wider uppercase">Backup Engine</span>
