@@ -45,6 +45,43 @@ def _get(key: str, default: str = "") -> str:
     return os.getenv(key, default)
 
 
+HOST_MOUNT_PREFIX = "/host"
+
+
+def _user_path_to_container(user_path: str) -> Path:
+    """Translate a user-facing Windows path (e.g. D:/Backups) to container path (/host/D/Backups).
+
+    Also accepts already-translated container paths (starting with /host or /backups).
+    """
+    p = user_path.strip().replace("\\", "/")
+
+    # Already a container path
+    if p.startswith(HOST_MOUNT_PREFIX) or p.startswith("/backups"):
+        return Path(p)
+
+    # Windows-style: D:/Backups/PostgreSQL or D:\Backups
+    if len(p) >= 2 and p[1] == ":":
+        drive_letter = p[0].upper()
+        rest = p[2:].lstrip("/")
+        return Path(f"{HOST_MOUNT_PREFIX}/{drive_letter}/{rest}")
+
+    return Path(p)
+
+
+def _container_path_to_user(container_path: str) -> str:
+    """Translate a container path (/host/D/Backups) back to user-facing (D:/Backups)."""
+    p = str(container_path).replace("\\", "/")
+    prefix = HOST_MOUNT_PREFIX + "/"
+    if p.startswith(prefix) and len(p) > len(prefix):
+        rest = p[len(prefix):]
+        drive_letter = rest[0]
+        remainder = rest[1:] if len(rest) > 1 else ""
+        if remainder.startswith("/"):
+            remainder = remainder[1:]
+        return f"{drive_letter}:/{remainder}" if remainder else f"{drive_letter}:/"
+    return p
+
+
 class Settings:
     """Application settings. Call Settings.reload() after saving new values."""
 
@@ -62,7 +99,8 @@ class Settings:
     SSH_PASSWORD: str = ""
 
     # Backup
-    BACKUP_LOCAL_DIR: Path = Path("/backups/databases")
+    BACKUP_LOCAL_DIR: Path = Path("/host/D/Backups/PostgreSQL")
+    BACKUP_LOCAL_DIR_DISPLAY: str = "D:/Backups/PostgreSQL"  # User-facing path
     BACKUP_REMOTE_TMP_DIR: str = "/tmp/pg_backups"
     RETENTION_DAYS: int = 7
     GENERATE_SQL: bool = True  # Generate .sql.gz in addition to .backup
@@ -100,7 +138,9 @@ class Settings:
         cls.SSH_KEY_PATH = _get("SSH_KEY_PATH", "")
         cls.SSH_PASSWORD = _get("SSH_PASSWORD", "")
 
-        cls.BACKUP_LOCAL_DIR = Path(_get("BACKUP_LOCAL_DIR", "/backups/databases"))
+        raw_dir = _get("BACKUP_LOCAL_DIR", "D:/Backups/PostgreSQL")
+        cls.BACKUP_LOCAL_DIR = _user_path_to_container(raw_dir)
+        cls.BACKUP_LOCAL_DIR_DISPLAY = _container_path_to_user(str(cls.BACKUP_LOCAL_DIR))
         cls.BACKUP_REMOTE_TMP_DIR = _get("BACKUP_REMOTE_TMP_DIR", "/tmp/pg_backups")
         cls.RETENTION_DAYS = int(_get("RETENTION_DAYS", "7"))
         cls.GENERATE_SQL = _get("GENERATE_SQL", "true").lower() in ("true", "1", "yes")
@@ -122,7 +162,7 @@ class Settings:
             "PG_PORT": cls.PG_PORT,
             "PG_USER": cls.PG_USER,
             "PG_PASSWORD": cls.PG_PASSWORD,
-            "BACKUP_LOCAL_DIR": str(cls.BACKUP_LOCAL_DIR),
+            "BACKUP_LOCAL_DIR": cls.BACKUP_LOCAL_DIR_DISPLAY,
             "BACKUP_REMOTE_TMP_DIR": cls.BACKUP_REMOTE_TMP_DIR,
             "RETENTION_DAYS": cls.RETENTION_DAYS,
             "SCHEDULER_HOUR": cls.SCHEDULER_HOUR,

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Save, TestTube, CheckCircle, XCircle, Loader2, Server, Database, FolderOpen, Clock, Eye, EyeOff } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Save, TestTube, CheckCircle, XCircle, Loader2, Server, Database, FolderOpen, Clock, Eye, EyeOff, HardDrive, ChevronRight, FolderPlus, ArrowLeft } from 'lucide-react'
 import { api } from '../services/api'
 import { toast } from '../components/Toast'
 import type { AppSettings, ConnectionTestResult } from '../types'
@@ -46,6 +46,271 @@ function Field({ label, name, value, onChange, type = 'text', placeholder, help,
         )}
       </div>
       {help && <p className="text-[10px] theme-text-faint">{help}</p>}
+    </div>
+  )
+}
+
+interface FolderBrowserProps {
+  value: string
+  onChange: (path: string) => void
+}
+
+function FolderBrowser({ value, onChange }: FolderBrowserProps) {
+  const [open, setOpen] = useState(false)
+  const [drives, setDrives] = useState<{ letter: string; path: string }[]>([])
+  const [currentDrive, setCurrentDrive] = useState('')
+  const [currentPath, setCurrentPath] = useState('')
+  const [folders, setFolders] = useState<string[]>([])
+  const [browsing, setBrowsing] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const loadDrives = useCallback(async () => {
+    try {
+      const res = await api.getDrives()
+      setDrives(res.drives)
+    } catch { /* ignore */ }
+  }, [])
+
+  const browse = useCallback(async (drive: string, path: string) => {
+    setBrowsing(true)
+    try {
+      const res = await api.browsePath(drive, path)
+      setCurrentDrive(res.drive)
+      setCurrentPath(res.path)
+      setFolders(res.folders)
+    } catch { /* ignore */ }
+    setBrowsing(false)
+  }, [])
+
+  const handleOpen = () => {
+    setOpen(true)
+    loadDrives()
+    // Parse current value to browse to it
+    const v = (value || '').replace(/\\/g, '/')
+    if (v.length >= 2 && v[1] === ':') {
+      const drive = v[0].toUpperCase()
+      const rest = v.substring(3)
+      browse(drive, rest)
+    }
+  }
+
+  const handleSelectDrive = (letter: string) => {
+    browse(letter, '')
+  }
+
+  const handleSelectFolder = (folder: string) => {
+    const newPath = currentPath ? `${currentPath}/${folder}` : folder
+    browse(currentDrive, newPath)
+  }
+
+  const handleGoUp = () => {
+    const parts = currentPath.split('/').filter(Boolean)
+    parts.pop()
+    browse(currentDrive, parts.join('/'))
+  }
+
+  const handleConfirm = () => {
+    const display = currentPath ? `${currentDrive}:/${currentPath}` : `${currentDrive}:/`
+    onChange(display)
+    setOpen(false)
+  }
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return
+    setCreating(true)
+    try {
+      const folderPath = currentPath ? `${currentPath}/${newFolderName}` : newFolderName
+      await api.createFolder(currentDrive, folderPath)
+      setNewFolderName('')
+      browse(currentDrive, currentPath) // Refresh
+      toast(`Folder "${newFolderName}" created`, 'success')
+    } catch {
+      toast('Failed to create folder', 'error')
+    }
+    setCreating(false)
+  }
+
+  const displayPath = currentPath ? `${currentDrive}:/${currentPath}` : currentDrive ? `${currentDrive}:/` : ''
+
+  return (
+    <div className="space-y-1.5">
+      <label className="flex items-center gap-1.5 text-xs font-semibold theme-text-tertiary uppercase tracking-wider">
+        <FolderOpen size={12} />
+        Backup Directory
+      </label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value || ''}
+          onChange={e => onChange(e.target.value)}
+          placeholder="D:/Backups/PostgreSQL"
+          className="flex-1 px-3 py-2 rounded-lg text-sm border theme-input transition-colors"
+        />
+        <button
+          type="button"
+          onClick={handleOpen}
+          className="px-3 py-2 rounded-lg text-sm border theme-border theme-text-secondary hover:theme-bg-hover transition-colors flex items-center gap-1.5"
+        >
+          <HardDrive size={14} />
+          Browse
+        </button>
+      </div>
+      <p className="text-[10px] theme-text-faint">Choose any folder on your connected drives</p>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" onClick={() => setOpen(false)}>
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+          {/* Modal */}
+          <div
+            className="relative bg-[var(--bg-primary)] rounded-2xl border border-[var(--border)] shadow-2xl w-full max-w-xl flex flex-col overflow-hidden"
+            style={{ maxHeight: '75vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-[var(--border)] flex items-center justify-between bg-[var(--bg-secondary)]">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-emerald-500/15 flex items-center justify-center">
+                  <HardDrive size={18} className="text-emerald-500" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[var(--text-primary)] text-base">Select Backup Folder</h3>
+                  <p className="text-[11px] text-[var(--text-faint)]">Choose where to store your database backups</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--text-faint)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Breadcrumb */}
+            <div className="px-6 py-2.5 border-b border-[var(--border)] text-xs text-[var(--text-tertiary)] flex items-center gap-1.5 flex-wrap bg-[var(--bg-primary)]">
+              {currentDrive ? (
+                <>
+                  <span className="text-emerald-500 font-semibold cursor-pointer hover:underline" onClick={() => { setCurrentDrive(''); setCurrentPath(''); setFolders([]); }}>
+                    <HardDrive size={11} className="inline mr-1" />Drives
+                  </span>
+                  <ChevronRight size={11} className="text-[var(--text-faint)]" />
+                  <span className="font-semibold cursor-pointer hover:underline" onClick={() => browse(currentDrive, '')}>{currentDrive}:</span>
+                  {currentPath.split('/').filter(Boolean).map((part, i, arr) => (
+                    <span key={i} className="flex items-center gap-1.5">
+                      <ChevronRight size={11} className="text-[var(--text-faint)]" />
+                      <span
+                        className={i === arr.length - 1 ? 'font-bold text-[var(--text-primary)]' : 'cursor-pointer hover:underline'}
+                        onClick={() => { if (i < arr.length - 1) browse(currentDrive, arr.slice(0, i + 1).join('/')) }}
+                      >{part}</span>
+                    </span>
+                  ))}
+                </>
+              ) : (
+                <span className="font-semibold text-[var(--text-secondary)]">
+                  <HardDrive size={11} className="inline mr-1" />Select a drive to browse
+                </span>
+              )}
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-4 min-h-[280px]">
+              {browsing ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-3">
+                  <Loader2 size={28} className="animate-spin text-emerald-500" />
+                  <span className="text-xs text-[var(--text-faint)]">Loading folders...</span>
+                </div>
+              ) : !currentDrive ? (
+                /* Drive selection */
+                <div className="grid grid-cols-2 gap-3">
+                  {drives.map(d => (
+                    <button
+                      key={d.letter}
+                      onClick={() => handleSelectDrive(d.letter)}
+                      className="flex items-center gap-4 p-4 rounded-xl border border-[var(--border)] hover:border-emerald-500/50 hover:bg-emerald-500/5 transition-all group"
+                    >
+                      <div className="w-11 h-11 rounded-xl bg-emerald-500/10 group-hover:bg-emerald-500/20 flex items-center justify-center transition-colors">
+                        <HardDrive size={22} className="text-emerald-500" />
+                      </div>
+                      <div className="text-left">
+                        <div className="font-bold text-[var(--text-primary)] text-sm">{d.letter}: Drive</div>
+                        <div className="text-xs text-[var(--text-faint)]">Local disk</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                /* Folder list */
+                <div className="space-y-0.5">
+                  {currentPath && (
+                    <button onClick={handleGoUp} className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-secondary)] group">
+                      <ArrowLeft size={15} className="text-[var(--text-faint)] group-hover:text-emerald-500 transition-colors" />
+                      <span className="font-medium">..</span>
+                    </button>
+                  )}
+                  {folders.length === 0 && (
+                    <div className="text-center py-12">
+                      <FolderOpen size={32} className="mx-auto text-[var(--text-faint)] mb-3 opacity-40" />
+                      <p className="text-sm text-[var(--text-faint)]">No subfolders here</p>
+                      <p className="text-xs text-[var(--text-faint)] mt-1">Create one below or select this folder</p>
+                    </div>
+                  )}
+                  {folders.map(f => (
+                    <button
+                      key={f}
+                      onClick={() => handleSelectFolder(f)}
+                      className="flex items-center gap-2.5 w-full px-3 py-2.5 rounded-lg hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-primary)] group"
+                    >
+                      <FolderOpen size={16} className="text-amber-500 shrink-0 group-hover:text-amber-400 transition-colors" />
+                      <span className="truncate font-medium">{f}</span>
+                      <ChevronRight size={13} className="ml-auto text-[var(--text-faint)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer: Create folder + Confirm */}
+            {currentDrive && (
+              <div className="px-6 py-4 border-t border-[var(--border)] bg-[var(--bg-secondary)] space-y-3">
+                {/* New folder row */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newFolderName}
+                    onChange={e => setNewFolderName(e.target.value)}
+                    placeholder="New folder name..."
+                    className="flex-1 px-3 py-2 rounded-lg text-xs border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] placeholder:text-[var(--text-faint)] focus:outline-none focus:border-emerald-500/50 transition-colors"
+                    onKeyDown={e => { if (e.key === 'Enter') handleCreateFolder() }}
+                  />
+                  <button
+                    onClick={handleCreateFolder}
+                    disabled={creating || !newFolderName.trim()}
+                    className="px-3 py-2 rounded-lg text-xs font-medium border border-[var(--border)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-1.5 disabled:opacity-40"
+                  >
+                    <FolderPlus size={13} />
+                    Create
+                  </button>
+                </div>
+                {/* Selected path + confirm */}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FolderOpen size={14} className="text-emerald-500 shrink-0" />
+                    <span className="text-xs text-[var(--text-secondary)] truncate font-mono">{displayPath || 'No folder selected'}</span>
+                  </div>
+                  <button
+                    onClick={handleConfirm}
+                    className="px-5 py-2.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors shrink-0 shadow-md shadow-emerald-500/20"
+                  >
+                    Select This Folder
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -206,7 +471,7 @@ export function SettingsPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Local Backup Directory" name="BACKUP_LOCAL_DIR" value={settings.BACKUP_LOCAL_DIR} onChange={handleChange} placeholder="/backups/databases" help="Inside Docker, mapped to D:\Backups\PostgreSQL" />
+          <FolderBrowser value={settings.BACKUP_LOCAL_DIR as string} onChange={(path) => handleChange('BACKUP_LOCAL_DIR', path)} />
           <Field label="Remote Temp Directory" name="BACKUP_REMOTE_TMP_DIR" value={settings.BACKUP_REMOTE_TMP_DIR} onChange={handleChange} placeholder="/tmp/pg_backups" help="Temporary directory on the remote server" />
           <Field label="Retention (days)" name="RETENTION_DAYS" value={settings.RETENTION_DAYS} onChange={handleChange} placeholder="7" help="Backups older than this are auto-deleted" />
         </div>

@@ -86,4 +86,19 @@ export const api = {
     request<NotificationTestResult>(`/notifications/${channel}/test`, {
       method: 'POST',
     }),
+
+  // Storage / Browse
+  getDrives: () => request<{ drives: { letter: string; path: string }[] }>('/storage/drives'),
+
+  browsePath: (drive: string, path: string) =>
+    request<{ drive: string; path: string; display: string; folders: string[] }>(
+      `/storage/browse?drive=${encodeURIComponent(drive)}&path=${encodeURIComponent(path)}`
+    ),
+
+  createFolder: (drive: string, path: string) =>
+    request<{ message: string; display: string }>('/storage/create-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drive, path }),
+    }),
 }
