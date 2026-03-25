@@ -162,3 +162,27 @@ class NotificationService:
                 lines.append(f"  ... and {len(errors) - 5} more")
 
         return "\n".join(lines)
+
+    def notify_event(self, event_type: str, message: str):
+        """Send a simple event notification to all enabled channels.
+
+        event_type: 'scheduled_start', 'manual_start', 'rotation', etc.
+        """
+        event_icons = {
+            "scheduled_start": "⏰",
+            "manual_start": "▶️",
+            "rotation": "🗑️",
+        }
+        icon = event_icons.get(event_type, "ℹ️")
+        subject = f"{icon} {message}"
+
+        enabled_channels = self._repo.get_enabled_channels()
+        for ch_config in enabled_channels:
+            channel_name = ch_config["channel"]
+            sender = _build_sender(channel_name, ch_config["settings"])
+            if not sender:
+                continue
+            try:
+                sender.send(subject, message, is_error=False)
+            except Exception as e:
+                logger.warning("Event notification failed via %s: %s", channel_name, e)

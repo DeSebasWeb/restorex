@@ -71,7 +71,7 @@ def _rebuild():
     # Restart scheduler with new settings
     if Settings.is_configured():
         init_scheduler(
-            backup_fn=_container.backup_service.run_full_backup,
+            backup_fn=_scheduled_backup,
             hour=Settings.SCHEDULER_HOUR,
             minute=Settings.SCHEDULER_MINUTE,
         )
@@ -171,6 +171,91 @@ def api_test_connection():
         })
 
 
+# ── Storage / Browse ────────────────────────────────────────────
+
+HOST_MOUNT_PREFIX = Path("/host")
+ALLOWED_DRIVE_LETTERS = {"C", "D", "E", "F"}
+
+
+@app.route("/api/storage/drives")
+def api_list_drives():
+    """List available host drives mounted in the container."""
+    drives = []
+    for letter in sorted(ALLOWED_DRIVE_LETTERS):
+        mount = HOST_MOUNT_PREFIX / letter
+        if mount.is_dir():
+            drives.append({"letter": letter, "path": f"{letter}:/"})
+    return jsonify({"drives": drives})
+
+
+@app.route("/api/storage/browse")
+def api_browse_directory():
+    """Browse directories on a host drive. Query params: drive=D&path=Backups"""
+    drive = (request.args.get("drive", "") or "").upper()
+    rel_path = request.args.get("path", "")
+
+    if drive not in ALLOWED_DRIVE_LETTERS:
+        return jsonify({"error": f"Drive {drive}: not available"}), 400
+
+    mount = HOST_MOUNT_PREFIX / drive
+    if not mount.is_dir():
+        return jsonify({"error": f"Drive {drive}: not mounted"}), 400
+
+    target = (mount / rel_path).resolve()
+    # Security: ensure target is within the drive mount
+    if not str(target).startswith(str(mount)):
+        return jsonify({"error": "Invalid path"}), 403
+
+    if not target.is_dir():
+        return jsonify({"error": "Directory not found"}), 404
+
+    folders = []
+    try:
+        for entry in sorted(target.iterdir()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                folders.append(entry.name)
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+
+    # Build the "display path" the user sees (e.g. D:/Backups/PostgreSQL)
+    display = f"{drive}:/{rel_path}" if rel_path else f"{drive}:/"
+
+    return jsonify({
+        "drive": drive,
+        "path": rel_path,
+        "display": display,
+        "folders": folders[:100],  # Limit to 100 entries
+    })
+
+
+@app.route("/api/storage/create-folder", methods=["POST"])
+def api_create_folder():
+    """Create a new folder on a host drive. Body: { drive, path }"""
+    data = request.json or {}
+    drive = (data.get("drive", "") or "").upper()
+    rel_path = data.get("path", "")
+
+    if drive not in ALLOWED_DRIVE_LETTERS:
+        return jsonify({"error": f"Drive {drive}: not available"}), 400
+    if not rel_path:
+        return jsonify({"error": "Path is required"}), 400
+
+    mount = HOST_MOUNT_PREFIX / drive
+    target = (mount / rel_path).resolve()
+
+    if not str(target).startswith(str(mount)):
+        return jsonify({"error": "Invalid path"}), 403
+
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        display = f"{drive}:/{rel_path}"
+        return jsonify({"message": f"Created {display}", "display": display})
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Status ──────────────────────────────────────────────────────
 
 @app.route("/api/status")
@@ -222,6 +307,15 @@ def api_run_backup():
         global _backup_running
         tracker = _container.progress_tracker
         try:
+            # Notify: manual backup starting
+            try:
+                _container.notification_service.notify_event(
+                    "manual_start",
+                    f"Manual backup started ({'Force All' if force else 'Smart Backup'})",
+                )
+            except Exception:
+                pass
+
             tracker.start(total_dbs=0)
             summary = _container.backup_service.run_full_backup(force=force)
 
@@ -230,23 +324,32 @@ def api_run_backup():
                 _container.notification_service.notify_backup_result(summary.to_dict())
             except Exception as notify_err:
                 logger.warning("Notification delivery failed: %s", notify_err)
+
+            # Rotate old backups and notify
+            try:
+                removed = _container.filesystem_adapter.rotate_old_backups()
+                if removed > 0:
+                    try:
+                        _container.notification_service.notify_event(
+                            "rotation",
+                            f"Retention policy applied: {removed} old backup file(s) deleted (>{Settings.RETENTION_DAYS} days).",
+                        )
+                    except Exception:
+                        pass
+            except Exception as rot_err:
+                logger.warning("Post-backup rotation failed: %s", rot_err)
+
         except Exception as e:
             logger.exception("Backup thread failed: %s", e)
-
-            # Notify about fatal errors (SSH failure, connection lost, etc.)
             try:
                 _container.notification_service.notify_backup_result({
-                    "backed_up": 0,
-                    "failed": 1,
-                    "skipped": 0,
-                    "total_dbs": 0,
-                    "started_at": "",
-                    "finished_at": "",
+                    "backed_up": 0, "failed": 1, "skipped": 0, "total_dbs": 0,
+                    "started_at": "", "finished_at": "",
                     "results": [],
                     "errors": [{"db_name": "SYSTEM", "error": str(e)}],
                 })
             except Exception:
-                pass  # Don't let notification failure mask the original error
+                pass
         finally:
             tracker.finish()
             with _backup_lock:
@@ -337,6 +440,72 @@ def api_logs():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Scheduled Backup Runner ─────────────────────────────────────
+# This is the function the scheduler calls. It wraps the full workflow:
+# lock check → notify start → backup → notify result → rotate → notify rotation
+
+
+def _scheduled_backup():
+    """Full backup workflow called by the scheduler and reusable by the API."""
+    global _backup_running
+
+    with _backup_lock:
+        if _backup_running:
+            logger.warning("Scheduled backup skipped — another backup is already running.")
+            return
+        _backup_running = True
+
+    tracker = _container.progress_tracker
+    try:
+        # Notify: backup starting
+        try:
+            _container.notification_service.notify_event(
+                "scheduled_start",
+                f"Scheduled backup started at {Settings.SCHEDULER_HOUR:02d}:{Settings.SCHEDULER_MINUTE:02d}",
+            )
+        except Exception:
+            pass
+
+        tracker.start(total_dbs=0)
+        summary = _container.backup_service.run_full_backup(force=False)
+
+        # Notify: backup result
+        try:
+            _container.notification_service.notify_backup_result(summary.to_dict())
+        except Exception as notify_err:
+            logger.warning("Notification delivery failed: %s", notify_err)
+
+        # Rotate old backups and notify if any were deleted
+        try:
+            removed = _container.filesystem_adapter.rotate_old_backups()
+            if removed > 0:
+                try:
+                    _container.notification_service.notify_event(
+                        "rotation",
+                        f"Retention policy applied: {removed} old backup file(s) deleted (>{Settings.RETENTION_DAYS} days).",
+                    )
+                except Exception:
+                    pass
+        except Exception as rot_err:
+            logger.warning("Post-backup rotation failed: %s", rot_err)
+
+    except Exception as e:
+        logger.exception("Scheduled backup failed: %s", e)
+        try:
+            _container.notification_service.notify_backup_result({
+                "backed_up": 0, "failed": 1, "skipped": 0, "total_dbs": 0,
+                "started_at": "", "finished_at": "",
+                "results": [],
+                "errors": [{"db_name": "SYSTEM", "error": str(e)}],
+            })
+        except Exception:
+            pass
+    finally:
+        tracker.finish()
+        with _backup_lock:
+            _backup_running = False
+
+
 # ── Bootstrap (runs on import — needed for both gunicorn and __main__) ──
 
 Settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -344,7 +513,7 @@ Settings.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 if Settings.is_configured():
     init_scheduler(
-        backup_fn=_container.backup_service.run_full_backup,
+        backup_fn=_scheduled_backup,
         hour=Settings.SCHEDULER_HOUR,
         minute=Settings.SCHEDULER_MINUTE,
     )
