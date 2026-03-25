@@ -1,4 +1,27 @@
 services:
+  # PostgreSQL — included for users who don't have PG installed.
+  # If you already have PostgreSQL running locally, comment out this service
+  # and set LOCAL_DB_URL in backend/.env to point to your existing instance.
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: restorex-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: pg_backup_manager
+  #   ports:
+  #     - "5433:5432"
+  #   volumes:
+  #     - restorex-pgdata:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+  #   networks:
+  #     - restorex-net
+
   backend:
     build: ./backend
     container_name: restorex-api
@@ -9,10 +32,16 @@ services:
       - ./backend/.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
     volumes:
-      - D:/Backups/PostgreSQL:/backups/databases
-      - ./logs:/app/logs
-      - ./data:/app/data    # Encryption key stored here
+      # Host drives — add/remove lines based on your available drives
+      - C:/:/host/C
+      - D:/:/host/D
+      # App data persisted on D: drive (logs, encryption key)
+      - D:/ProyectBackupAutomatico/logs:/app/logs
+      - D:/ProyectBackupAutomatico/data:/app/data
     networks:
       - restorex-net
 
@@ -26,6 +55,10 @@ services:
       - backend
     networks:
       - restorex-net
+
+# volumes:
+#   restorex-pgdata:
+#     driver: local
 
 networks:
   restorex-net:
