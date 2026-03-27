@@ -6,6 +6,7 @@ when the user saves new values from the dashboard.
 """
 
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -116,6 +117,11 @@ class Settings:
     # Flask
     FLASK_PORT: int = int(os.getenv("FLASK_PORT", "5000"))
     FLASK_SECRET_KEY: str = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
+
+    # JWT Authentication
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "") or secrets.token_hex(32)
+    ACCESS_TOKEN_MINUTES: int = int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))
+    REFRESH_TOKEN_DAYS: int = int(os.getenv("REFRESH_TOKEN_DAYS", "2"))
 
     # Internal paths
     DATA_DIR: Path = DATA_DIR
