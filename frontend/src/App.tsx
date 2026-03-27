@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Loader2, WifiOff, RefreshCw } from 'lucide-react'
+import { Loader2, WifiOff, RefreshCw, AlertTriangle, Settings as SettingsIcon } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
+import { SetupWizard } from './components/SetupWizard'
 import { ToastContainer, toast } from './components/Toast'
 import { DashboardPage } from './pages/DashboardPage'
 import { DatabasesPage } from './pages/DatabasesPage'
@@ -27,11 +28,22 @@ const tabTitles: Record<string, string> = {
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [scanning, setScanning] = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
+  const [wizardSkipped, setWizardSkipped] = useState(false)
   const { status, history, loading, error, refresh } = useBackupStatus()
   const { theme, toggleTheme } = useTheme()
 
+  const configured = status?.configured ?? true // assume configured until we know otherwise
+
   const databases = status?.databases ?? []
   const backupRunning = status?.backup_running ?? false
+
+  // Show wizard automatically if not configured
+  useEffect(() => {
+    if (status && !status.configured && !wizardSkipped) {
+      setShowWizard(true)
+    }
+  }, [status, wizardSkipped])
 
   const handleScan = useCallback(async () => {
     setScanning(true)
@@ -83,9 +95,34 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen theme-bg-primary theme-text-secondary transition-colors duration-300">
+      {/* Setup Wizard */}
+      {showWizard && (
+        <SetupWizard
+          onComplete={() => { setShowWizard(false); setWizardSkipped(false); refresh() }}
+          onSkip={() => { setShowWizard(false); setWizardSkipped(true) }}
+        />
+      )}
+
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
       <main className="ml-64 flex-1 min-h-screen">
+        {/* Not configured banner */}
+        {!configured && !showWizard && (
+          <div className="mx-6 mt-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 flex items-center gap-4">
+            <AlertTriangle size={20} className="text-amber-500 shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-[var(--text-primary)]">Setup required</p>
+              <p className="text-xs text-[var(--text-faint)]">Configure your server connection to start backing up your databases.</p>
+            </div>
+            <button
+              onClick={() => setShowWizard(true)}
+              className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-500 transition-colors flex items-center gap-2 shrink-0"
+            >
+              <SettingsIcon size={13} /> Run Setup
+            </button>
+          </div>
+        )}
+
         <TopBar
           title={tabTitles[activeTab]}
           backupRunning={backupRunning}
