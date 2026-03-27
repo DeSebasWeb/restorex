@@ -139,3 +139,19 @@ export interface NotificationTestResult {
   success: boolean
   message: string
 }
+
+// ── Authentication ──────────────────────────────────────────────
+
+export interface AuthUser {
+  id: number
+  username: string
+  email: string | null
+  role: string
+  force_password_change: boolean
+}
+
+export interface LoginResponse {
+  access_token: string
+  user: AuthUser
+  force_password_change: boolean
+}
