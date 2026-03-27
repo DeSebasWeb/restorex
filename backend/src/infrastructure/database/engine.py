@@ -90,6 +90,10 @@ def init_db(database_url: str, max_retries: int = 5, retry_delay: float = 3.0) -
 
                 _run_alembic_migrations()
 
+                # Seed auth data (roles, permissions, default admin)
+                from src.infrastructure.database.seed import seed_auth_data
+                seed_auth_data()
+
                 logger.info("Database initialized successfully.")
                 return
 
