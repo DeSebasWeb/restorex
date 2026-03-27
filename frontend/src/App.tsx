@@ -3,7 +3,9 @@ import { Loader2, WifiOff, RefreshCw, AlertTriangle, Settings as SettingsIcon } 
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { SetupWizard } from './components/SetupWizard'
+import { ChangePasswordModal } from './components/ChangePasswordModal'
 import { ToastContainer, toast } from './components/Toast'
+import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { DatabasesPage } from './pages/DatabasesPage'
 import { HistoryPage } from './pages/HistoryPage'
@@ -11,6 +13,7 @@ import { ReportsPage } from './pages/ReportsPage'
 import { LogsPage } from './pages/LogsPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { useAuth } from './hooks/useAuth'
 import { useBackupStatus } from './hooks/useBackupStatus'
 import { useTheme } from './hooks/useTheme'
 import { api } from './services/api'
@@ -26,15 +29,15 @@ const tabTitles: Record<string, string> = {
 }
 
 export default function App() {
+  const { user, loading: authLoading, isAuthenticated, login, logout, changePassword } = useAuth()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [scanning, setScanning] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
   const [wizardSkipped, setWizardSkipped] = useState(false)
-  const { status, history, loading, error, refresh } = useBackupStatus()
+  const { status, history, loading, error, refresh } = useBackupStatus(!isAuthenticated)
   const { theme, toggleTheme } = useTheme()
 
-  const configured = status?.configured ?? true // assume configured until we know otherwise
-
+  const configured = status?.configured ?? true
   const databases = status?.databases ?? []
   const backupRunning = status?.backup_running ?? false
 
@@ -93,6 +96,36 @@ export default function App() {
     }
   }, [refresh])
 
+  // ── Auth gates ─────────────────────────────────────────────────
+
+  // Loading auth state
+  if (authLoading) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: '#0f1219' }}>
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 size={32} className="animate-spin text-emerald-500" />
+          <p className="text-sm text-[#8b95a5]">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Not authenticated → Login page
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={login} />
+  }
+
+  // Force password change
+  if (user?.force_password_change) {
+    return (
+      <div className="min-h-screen theme-bg-primary">
+        <ChangePasswordModal forced onChangePassword={changePassword} />
+      </div>
+    )
+  }
+
+  // ── Authenticated dashboard ────────────────────────────────────
+
   return (
     <div className="flex min-h-screen theme-bg-primary theme-text-secondary transition-colors duration-300">
       {/* Setup Wizard */}
@@ -103,7 +136,12 @@ export default function App() {
         />
       )}
 
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        user={user}
+        onLogout={logout}
+      />
 
       <main className="ml-64 flex-1 min-h-screen">
         {/* Not configured banner */}

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Search, Download, Zap, Wifi, WifiOff, Sun, Moon } from 'lucide-react'
 import type { Theme } from '../hooks/useTheme'
-
 interface TopBarProps {
   title: string
   backupRunning: boolean

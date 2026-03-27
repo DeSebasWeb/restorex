@@ -1,21 +1,30 @@
-import { Database, LayoutDashboard, Clock, FileText, BarChart3, Bell, Shield, Settings } from 'lucide-react'
+import { Database, LayoutDashboard, Clock, FileText, BarChart3, Bell, Settings, LogOut, User } from 'lucide-react'
+import type { AuthUser } from '../types'
 
 interface SidebarProps {
   activeTab: string
   onTabChange: (tab: string) => void
+  user?: AuthUser | null
+  onLogout?: () => void
 }
 
 const navItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'databases', label: 'Databases', icon: Database },
-  { id: 'history', label: 'History', icon: Clock },
-  { id: 'reports', label: 'Reports', icon: BarChart3 },
-  { id: 'logs', label: 'Logs', icon: FileText },
-  { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, minRole: 'viewer' },
+  { id: 'databases', label: 'Databases', icon: Database, minRole: 'viewer' },
+  { id: 'history', label: 'History', icon: Clock, minRole: 'viewer' },
+  { id: 'reports', label: 'Reports', icon: BarChart3, minRole: 'viewer' },
+  { id: 'logs', label: 'Logs', icon: FileText, minRole: 'viewer' },
+  { id: 'notifications', label: 'Notifications', icon: Bell, minRole: 'admin' },
+  { id: 'settings', label: 'Settings', icon: Settings, minRole: 'admin' },
 ]
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+const ROLE_LEVEL: Record<string, number> = { admin: 3, operator: 2, viewer: 1 }
+
+export function Sidebar({ activeTab, onTabChange, user, onLogout }: SidebarProps) {
+  const userLevel = ROLE_LEVEL[user?.role || ''] || 0
+
+  const visibleItems = navItems.filter(item => userLevel >= (ROLE_LEVEL[item.minRole] || 0))
+
   return (
     <nav className="w-64 theme-bg-secondary flex flex-col fixed top-0 left-0 bottom-0 z-50 theme-border border-r transition-colors duration-300">
       {/* Logo */}
@@ -35,7 +44,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
       {/* Nav links */}
       <div className="flex-1 px-3 py-4 space-y-1">
         <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest theme-text-faint">Main Menu</p>
-        {navItems.map(({ id, label, icon: Icon }) => {
+        {visibleItems.map(({ id, label, icon: Icon }) => {
           const isActive = activeTab === id
           return (
             <button
@@ -60,18 +69,39 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         })}
       </div>
 
-      {/* Footer */}
-      <div className="px-4 pb-5">
-        <div className="rounded-xl bg-gradient-to-br from-blue-500/[0.08] to-indigo-500/[0.04] border border-blue-500/10 p-4">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Shield size={14} className="text-blue-400" />
-            <span className="text-[11px] font-semibold text-emerald-400">Secure System</span>
+      {/* User info + Logout */}
+      {user && (
+        <div className="px-4 pb-3">
+          <div className="rounded-xl theme-bg-primary border theme-border p-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/20 flex items-center justify-center">
+                <User size={14} className="text-emerald-500" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold theme-text truncate">{user.username}</p>
+                <span className={`inline-block text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded mt-0.5 ${
+                  user.role === 'admin' ? 'bg-emerald-500/15 text-emerald-400' :
+                  user.role === 'operator' ? 'bg-blue-500/15 text-blue-400' :
+                  'bg-gray-500/15 text-gray-400'
+                }`}>
+                  {user.role}
+                </span>
+              </div>
+              <button
+                onClick={() => onLogout?.()}
+                title="Sign out"
+                className="p-1.5 rounded-lg theme-text-faint hover:text-red-400 hover:bg-red-500/10 transition-all"
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
           </div>
-          <p className="text-[10px] theme-text-muted leading-relaxed">
-            Encrypted SSH transfers, validated operations, hexagonal architecture.
-          </p>
         </div>
-        <p className="text-center text-[10px] theme-text-faint mt-3">Restorex v1.0.0</p>
+      )}
+
+      {/* Footer */}
+      <div className="px-4 pb-4">
+        <p className="text-center text-[10px] theme-text-faint">Restorex v1.0.0</p>
       </div>
     </nav>
   )
