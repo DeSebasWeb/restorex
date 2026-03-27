@@ -13,6 +13,7 @@ import { ReportsPage } from './pages/ReportsPage'
 import { LogsPage } from './pages/LogsPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { UsersPage } from './pages/UsersPage'
 import { useAuth } from './hooks/useAuth'
 import { useBackupStatus } from './hooks/useBackupStatus'
 import { useTheme } from './hooks/useTheme'
@@ -24,6 +25,7 @@ const tabTitles: Record<string, string> = {
   history: 'History',
   reports: 'Reports',
   logs: 'Logs',
+  users: 'Users',
   notifications: 'Notifications',
   settings: 'Settings',
 }
@@ -205,6 +207,9 @@ export default function App() {
         )}
         {activeTab === 'logs' && (
           <LogsPage />
+        )}
+        {activeTab === 'users' && (
+          <UsersPage />
         )}
         {activeTab === 'notifications' && (
           <NotificationsPage />

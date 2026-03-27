@@ -1,4 +1,4 @@
-import { Database, LayoutDashboard, Clock, FileText, BarChart3, Bell, Settings, LogOut, User } from 'lucide-react'
+import { Database, LayoutDashboard, Clock, FileText, BarChart3, Bell, Settings, LogOut, User, Users } from 'lucide-react'
 import type { AuthUser } from '../types'
 
 interface SidebarProps {
@@ -14,6 +14,7 @@ const navItems = [
   { id: 'history', label: 'History', icon: Clock, minRole: 'viewer' },
   { id: 'reports', label: 'Reports', icon: BarChart3, minRole: 'viewer' },
   { id: 'logs', label: 'Logs', icon: FileText, minRole: 'viewer' },
+  { id: 'users', label: 'Users', icon: Users, minRole: 'admin' },
   { id: 'notifications', label: 'Notifications', icon: Bell, minRole: 'admin' },
   { id: 'settings', label: 'Settings', icon: Settings, minRole: 'admin' },
 ]
