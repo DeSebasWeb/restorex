@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 from src.container import init_container
 from src.entry_points.api.auth_middleware import require_auth, require_role
 from src.entry_points.api.auth_routes import auth_bp
+from src.entry_points.api.user_routes import user_bp
 from src.entry_points.scheduler import init_scheduler, shutdown_scheduler
 from src.infrastructure.config import Settings
 from src.infrastructure.database import init_db
@@ -47,6 +48,7 @@ app = Flask(__name__)
 app.secret_key = Settings.FLASK_SECRET_KEY
 CORS(app, supports_credentials=True)
 app.register_blueprint(auth_bp)
+app.register_blueprint(user_bp)
 
 # Reduce werkzeug noise
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
