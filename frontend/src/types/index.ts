@@ -155,3 +155,38 @@ export interface LoginResponse {
   user: AuthUser
   force_password_change: boolean
 }
+
+// ── User Management ─────────────────────────────────────────────
+
+export interface ManagedUser {
+  id: number
+  username: string
+  email: string | null
+  is_active: boolean
+  force_password_change: boolean
+  role_id: number
+  role_name: string
+  created_at: string | null
+  updated_at: string | null
+  deleted_at: string | null
+}
+
+export interface CreateUserRequest {
+  username: string
+  email?: string
+  password: string
+  role_id: number
+}
+
+export interface UpdateUserRequest {
+  username?: string
+  email?: string
+  role_id?: number
+  is_active?: boolean
+}
+
+export interface Role {
+  id: number
+  name: string
+  description: string | null
+}

@@ -1,4 +1,4 @@
-import type { StatusResponse, BackupRun, Report, AppSettings, ConnectionTestResult, BackupProgress, NotificationChannel, NotificationTestResult, LoginResponse, AuthUser } from '../types'
+import type { StatusResponse, BackupRun, Report, AppSettings, ConnectionTestResult, BackupProgress, NotificationChannel, NotificationTestResult, LoginResponse, AuthUser, ManagedUser, CreateUserRequest, UpdateUserRequest, Role } from '../types'
 
 const BASE = '/api'
 const REQUEST_TIMEOUT = 30000
@@ -189,5 +189,38 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drive, path }),
+    }),
+
+  // User Management
+  getUsers: (includeDeleted = false) =>
+    request<{ users: ManagedUser[] }>(`/users?include_deleted=${includeDeleted}`),
+
+  getRoles: () => request<{ roles: Role[] }>('/users/roles'),
+
+  createUser: (data: CreateUserRequest) =>
+    request<{ user: ManagedUser; message: string }>('/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  updateUser: (id: number, data: UpdateUserRequest) =>
+    request<{ user: ManagedUser; message: string }>(`/users/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  deleteUser: (id: number) =>
+    request<{ message: string }>(`/users/${id}`, { method: 'DELETE' }),
+
+  restoreUser: (id: number) =>
+    request<{ user: ManagedUser; message: string }>(`/users/${id}/restore`, { method: 'POST' }),
+
+  resetUserPassword: (id: number, new_password: string) =>
+    request<{ message: string }>(`/users/${id}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password }),
     }),
 }
