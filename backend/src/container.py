@@ -7,6 +7,7 @@ Entry points (web, CLI, scheduler) use this container to get services.
 
 import logging
 
+from src.application.services.auth_service import AuthService
 from src.application.services.backup_service import BackupService
 from src.application.services.notification_service import NotificationService
 from src.application.services.report_service import ReportService
@@ -14,6 +15,7 @@ from src.infrastructure.adapters.filesystem_adapter import FilesystemAdapter
 from src.infrastructure.adapters.postgres_adapter import PostgresAdapter
 from src.infrastructure.adapters.ssh_adapter import SSHAdapter
 from src.infrastructure.config import Settings
+from src.infrastructure.persistence.auth_repository import PostgresAuthRepository
 from src.infrastructure.persistence.postgres_backup_repository import PostgresBackupRepository
 from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.postgres_settings_repository import PostgresSettingsRepository
@@ -109,6 +111,15 @@ class Container:
         self.notification_repository = NotificationRepository()
         self.notification_service = NotificationService(
             repository=self.notification_repository,
+        )
+
+        # Authentication
+        self.auth_repository = PostgresAuthRepository()
+        self.auth_service = AuthService(
+            repository=self.auth_repository,
+            jwt_secret=Settings.JWT_SECRET_KEY,
+            access_token_minutes=Settings.ACCESS_TOKEN_MINUTES,
+            refresh_token_days=Settings.REFRESH_TOKEN_DAYS,
         )
 
 

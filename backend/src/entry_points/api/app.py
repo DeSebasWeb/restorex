@@ -12,6 +12,8 @@ from flask_cors import CORS
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
 from src.container import init_container
+from src.entry_points.api.auth_middleware import require_auth, require_role
+from src.entry_points.api.auth_routes import auth_bp
 from src.entry_points.scheduler import init_scheduler, shutdown_scheduler
 from src.infrastructure.config import Settings
 from src.infrastructure.database import init_db
@@ -43,7 +45,8 @@ logger = logging.getLogger(__name__)
 # Flask app
 app = Flask(__name__)
 app.secret_key = Settings.FLASK_SECRET_KEY
-CORS(app)
+CORS(app, supports_credentials=True)
+app.register_blueprint(auth_bp)
 
 # Reduce werkzeug noise
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
@@ -92,6 +95,8 @@ def health():
 # ── Settings ────────────────────────────────────────────────────
 
 @app.route("/api/settings", methods=["GET"])
+@require_auth
+@require_role("admin")
 def api_get_settings():
     try:
         masked = _settings_repo.get_all_masked(Settings.get_env_defaults())
@@ -116,6 +121,8 @@ def api_get_settings():
 
 
 @app.route("/api/settings", methods=["POST"])
+@require_auth
+@require_role("admin")
 def api_save_settings():
     try:
         updates = request.json
@@ -135,6 +142,8 @@ def api_save_settings():
 
 
 @app.route("/api/settings/test-connection", methods=["POST"])
+@require_auth
+@require_role("admin")
 def api_test_connection():
     try:
         if request.is_json and request.json:
@@ -178,6 +187,8 @@ ALLOWED_DRIVE_LETTERS = {"C", "D", "E", "F"}
 
 
 @app.route("/api/storage/drives")
+@require_auth
+@require_role("admin")
 def api_list_drives():
     """List available host drives mounted in the container."""
     drives = []
@@ -189,6 +200,8 @@ def api_list_drives():
 
 
 @app.route("/api/storage/browse")
+@require_auth
+@require_role("admin")
 def api_browse_directory():
     """Browse directories on a host drive. Query params: drive=D&path=Backups"""
     drive = (request.args.get("drive", "") or "").upper()
@@ -229,6 +242,8 @@ def api_browse_directory():
 
 
 @app.route("/api/storage/create-folder", methods=["POST"])
+@require_auth
+@require_role("admin")
 def api_create_folder():
     """Create a new folder on a host drive. Body: { drive, path }"""
     data = request.json or {}
@@ -259,6 +274,8 @@ def api_create_folder():
 # ── Status ──────────────────────────────────────────────────────
 
 @app.route("/api/status")
+@require_auth
+@require_role("viewer")
 def api_status():
     try:
         statuses = _container.report_service.get_all_database_statuses()
@@ -279,6 +296,8 @@ def api_status():
 # ── History ─────────────────────────────────────────────────────
 
 @app.route("/api/history")
+@require_auth
+@require_role("viewer")
 def api_history():
     try:
         history = _container.backup_repository.get_history(limit=50)
@@ -290,6 +309,8 @@ def api_history():
 # ── Backup ──────────────────────────────────────────────────────
 
 @app.route("/api/backup/run", methods=["POST"])
+@require_auth
+@require_role("operator")
 def api_run_backup():
     global _backup_running
 
@@ -360,6 +381,8 @@ def api_run_backup():
 
 
 @app.route("/api/backup/status")
+@require_auth
+@require_role("viewer")
 def api_backup_running():
     from src.infrastructure.persistence.progress_tracker import ProgressTracker
     progress = ProgressTracker.get_progress()
@@ -374,6 +397,8 @@ def api_backup_running():
 # ── Scan ────────────────────────────────────────────────────────
 
 @app.route("/api/scan", methods=["POST"])
+@require_auth
+@require_role("operator")
 def api_scan():
     if not Settings.is_configured():
         return jsonify({"error": "Server not configured. Go to Settings first."}), 400
@@ -388,6 +413,8 @@ def api_scan():
 # ── Report ──────────────────────────────────────────────────────
 
 @app.route("/api/report")
+@require_auth
+@require_role("viewer")
 def api_report():
     try:
         report = _container.report_service.generate_report()
@@ -399,6 +426,8 @@ def api_report():
 # ── Notifications ──────────────────────────────────────────────
 
 @app.route("/api/notifications", methods=["GET"])
+@require_auth
+@require_role("admin")
 def api_get_notifications():
     try:
         channels = _container.notification_repository.get_all_channels_masked()
@@ -408,6 +437,8 @@ def api_get_notifications():
 
 
 @app.route("/api/notifications/<channel_name>", methods=["POST"])
+@require_auth
+@require_role("admin")
 def api_save_notification(channel_name: str):
     try:
         data = request.json
@@ -421,6 +452,8 @@ def api_save_notification(channel_name: str):
 
 
 @app.route("/api/notifications/<channel_name>/test", methods=["POST"])
+@require_auth
+@require_role("admin")
 def api_test_notification(channel_name: str):
     try:
         success, message = _container.notification_service.test_channel(channel_name)
@@ -432,6 +465,8 @@ def api_test_notification(channel_name: str):
 # ── Logs ────────────────────────────────────────────────────────
 
 @app.route("/api/logs")
+@require_auth
+@require_role("viewer")
 def api_logs():
     try:
         logs = _container.report_service.get_logs(lines=100)
