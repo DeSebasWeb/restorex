@@ -20,6 +20,7 @@ class UserModel(Base):
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+    deleted_at = Column(DateTime, nullable=True, default=None)
 
     role = relationship("RoleModel", back_populates="users")
     refresh_tokens = relationship("RefreshTokenModel", back_populates="user", cascade="all, delete-orphan")
