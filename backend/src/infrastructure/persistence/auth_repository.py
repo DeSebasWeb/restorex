@@ -26,14 +26,16 @@ class PostgresAuthRepository(AuthRepository):
 
     def get_user_by_username(self, username: str) -> dict | None:
         with session_scope() as session:
-            user = session.query(UserModel).options(joinedload(UserModel.role)).filter_by(username=username).first()
+            user = (session.query(UserModel).options(joinedload(UserModel.role))
+                    .filter_by(username=username).filter(UserModel.deleted_at.is_(None)).first())
             if not user:
                 return None
             return self._user_to_dict(user)
 
     def get_user_by_id(self, user_id: int) -> dict | None:
         with session_scope() as session:
-            user = session.query(UserModel).options(joinedload(UserModel.role)).filter_by(id=user_id).first()
+            user = (session.query(UserModel).options(joinedload(UserModel.role))
+                    .filter_by(id=user_id).filter(UserModel.deleted_at.is_(None)).first())
             if not user:
                 return None
             return self._user_to_dict(user)
