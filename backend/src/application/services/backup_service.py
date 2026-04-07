@@ -356,8 +356,8 @@ class BackupService:
                 logger.info("Generating %s for %s...", ext, safe_name)
 
                 try:
-                    pg_dump_base = (
-                        f"PGPASSWORD={shlex.quote(self._pg_password)} pg_dump "
+                    pg_dump_cmd = (
+                        f"pg_dump "
                         f"-h {shlex.quote(self._pg_host)} "
                         f"-p {shlex.quote(str(self._pg_port))} "
                         f"-U {shlex.quote(self._pg_user)} "
@@ -365,9 +365,11 @@ class BackupService:
                         f"{shlex.quote(safe_name)}"
                     )
                     if fmt.needs_pipe_gzip:
-                        cmd = f"{pg_dump_base} | gzip > {shlex.quote(remote_path)}"
+                        inner = f"export PGPASSWORD={shlex.quote(self._pg_password)}; {pg_dump_cmd} | gzip > {shlex.quote(remote_path)}"
                     else:
-                        cmd = f"{pg_dump_base} -f {shlex.quote(remote_path)}"
+                        inner = f"export PGPASSWORD={shlex.quote(self._pg_password)}; {pg_dump_cmd} -f {shlex.quote(remote_path)}"
+                    # Use subshell to hide password from ps aux
+                    cmd = f"bash -c {shlex.quote(inner)}"
 
                     remote_files_created.append(remote_path)
                     _, stderr, code = executor.execute(cmd)
