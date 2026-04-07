@@ -1,18 +1,20 @@
 """Concrete adapter: SSH-based remote executor and file transfer.
 
 Implements both RemoteExecutor and FileTransfer ports using paramiko.
+All configuration is injected via constructor — no direct Settings access.
 """
 
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import paramiko
 
 from src.domain.ports.file_transfer import FileTransfer, ProgressCallback
+from src.domain.ports.host_key_store import HostKeyStore
 from src.domain.ports.remote_executor import RemoteExecutor
-from src.infrastructure.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +22,55 @@ logger = logging.getLogger(__name__)
 _SAFE_PATH_CHARS = re.compile(r"^[a-zA-Z0-9_/.\-]+$")
 
 
+@dataclass(frozen=True)
+class SSHConfig:
+    """Immutable SSH connection parameters — injected into SSHAdapter."""
+    host: str
+    port: int
+    user: str
+    password: str = ""
+    key_path: str = ""
+    remote_tmp_dir: str = "/tmp/pg_backups"
+
+
+class PinnedKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """Trust On First Use (TOFU) with persistent fingerprint pinning.
+
+    First connection: accepts the key and stores its fingerprint via HostKeyStore.
+    Subsequent connections: rejects if the fingerprint doesn't match (MITM detection).
+    """
+
+    def __init__(self, store: HostKeyStore):
+        self._store = store
+
+    def missing_host_key(self, client, hostname, key):
+        fingerprint = key.get_fingerprint().hex()
+        stored = self._store.get_fingerprint(hostname)
+
+        if stored is None:
+            self._store.save_fingerprint(hostname, fingerprint)
+            logger.info("SSH host key pinned for %s: %s", hostname, fingerprint)
+        elif stored != fingerprint:
+            raise paramiko.SSHException(
+                f"SSH host key CHANGED for {hostname}! "
+                f"Expected {stored}, got {fingerprint}. "
+                f"Possible MITM attack. If the server was reinstalled, "
+                f"clear the stored fingerprint in Settings to re-trust."
+            )
+        else:
+            logger.debug("SSH host key verified for %s", hostname)
+
+
 class SSHAdapter(RemoteExecutor, FileTransfer):
     """Single SSH connection that serves as both executor and file transfer."""
 
     _KNOWN_HOSTS_FILE = Path.home() / ".ssh" / "known_hosts"
 
-    def __init__(self):
+    def __init__(self, config: SSHConfig, host_key_store: HostKeyStore | None = None):
         self._client: paramiko.SSHClient | None = None
         self._sftp: paramiko.SFTPClient | None = None
+        self._config = config
+        self._host_key_store = host_key_store
 
     # ── RemoteExecutor ──────────────────────────────────────────
 
@@ -42,27 +85,28 @@ class SSHAdapter(RemoteExecutor, FileTransfer):
         if known_hosts.exists():
             self._client.load_host_keys(str(known_hosts))
 
-        # AutoAddPolicy saves new host keys to known_hosts on first connect.
-        # After the first connection, the host key is pinned and future
-        # connections will reject if the key changes (MITM detection).
-        self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # TOFU: accept on first connect, reject if key changes (MITM detection).
+        if self._host_key_store:
+            self._client.set_missing_host_key_policy(PinnedKeyPolicy(self._host_key_store))
+        else:
+            self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         kwargs: dict = {
-            "hostname": Settings.SSH_HOST,
-            "port": Settings.SSH_PORT,
-            "username": Settings.SSH_USER,
+            "hostname": self._config.host,
+            "port": self._config.port,
+            "username": self._config.user,
         }
 
-        key_path = os.path.expanduser(Settings.SSH_KEY_PATH)
-        if Settings.SSH_KEY_PATH and os.path.exists(key_path):
+        key_path = os.path.expanduser(self._config.key_path)
+        if self._config.key_path and os.path.exists(key_path):
             kwargs["key_filename"] = key_path
-        elif Settings.SSH_PASSWORD:
-            kwargs["password"] = Settings.SSH_PASSWORD
+        elif self._config.password:
+            kwargs["password"] = self._config.password
         else:
             kwargs["look_for_keys"] = True
 
-        kwargs["timeout"] = 15  # 15 second connection timeout
-        logger.info("Connecting SSH to %s:%s...", Settings.SSH_HOST, Settings.SSH_PORT)
+        kwargs["timeout"] = 15
+        logger.info("Connecting SSH to %s:%s...", self._config.host, self._config.port)
         self._client.connect(**kwargs)
 
         # Keep connection alive during long pg_dump operations (every 30s)
@@ -79,7 +123,6 @@ class SSHAdapter(RemoteExecutor, FileTransfer):
             logger.warning("Could not save host keys: %s", e)
 
         self._sftp = self._client.open_sftp()
-        # Set SFTP channel timeout to None (unlimited) for large file transfers
         self._sftp.get_channel().settimeout(None)
         logger.info("SSH connected.")
 
@@ -128,16 +171,14 @@ class SSHAdapter(RemoteExecutor, FileTransfer):
     def cleanup_remote(self, remote_path: str) -> None:
         """Delete a temporary backup file on the remote server.
 
-        SAFETY: Only deletes files inside BACKUP_REMOTE_TMP_DIR.
+        SAFETY: Only deletes files inside the configured remote_tmp_dir.
         Rejects paths with shell metacharacters.
         """
-        # Validate path characters (no semicolons, pipes, backticks, etc.)
         if not _SAFE_PATH_CHARS.match(remote_path):
             logger.error("BLOCKED: cleanup_remote refused unsafe path: %r", remote_path)
             raise ValueError(f"Unsafe remote path rejected: {remote_path!r}")
 
-        # Resolve and verify the file is inside the allowed temp directory
-        allowed_dir = PurePosixPath(Settings.BACKUP_REMOTE_TMP_DIR)
+        allowed_dir = PurePosixPath(self._config.remote_tmp_dir)
         resolved = PurePosixPath(remote_path)
 
         if not str(resolved).startswith(str(allowed_dir) + "/"):
@@ -150,7 +191,6 @@ class SSHAdapter(RemoteExecutor, FileTransfer):
                 f"not inside {allowed_dir}"
             )
 
-        # Use SFTP remove (not shell rm) — no injection possible
         if self._sftp is None:
             raise RuntimeError("SFTP not available. Call connect() first.")
 
