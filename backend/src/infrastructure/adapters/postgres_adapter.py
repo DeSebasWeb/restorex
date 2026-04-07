@@ -5,40 +5,53 @@ an injected RemoteExecutor (SSH).
 
 SECURITY: All database names are validated through DbName value object
 before reaching any shell command or SQL query.
+All configuration is injected via constructor — no direct Settings access.
 """
 
 import logging
 import shlex
+from dataclasses import dataclass
 
 from src.domain.ports.database_inspector import DatabaseInspector
 from src.domain.ports.remote_executor import RemoteExecutor
 from src.domain.value_objects.db_change_stats import DbChangeStats
 from src.domain.value_objects.db_name import DbName
-from src.infrastructure.config import Settings
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PGConfig:
+    """Immutable PostgreSQL connection parameters — injected into PostgresAdapter."""
+    host: str
+    port: int
+    user: str
+    password: str
+    excluded_dbs: frozenset[str] = frozenset({"template0", "template1", "postgres"})
+
+
 class PostgresAdapter(DatabaseInspector):
-    def __init__(self, executor: RemoteExecutor):
+    def __init__(self, executor: RemoteExecutor, config: PGConfig):
         self._exec = executor
+        self._config = config
 
     def _psql(self, sql: str, db_name: str = "postgres") -> str:
         """Run a psql command remotely via SSH.
 
-        PGPASSWORD is passed as env var. All arguments are shell-quoted via shlex.
-        SQL is passed via -c flag with proper escaping.
+        PGPASSWORD is exported in a subshell to hide from ps aux.
+        All arguments are shell-quoted via shlex.
         """
         psql_cmd = (
-            f"psql -h {shlex.quote(Settings.PG_HOST)} "
-            f"-p {shlex.quote(str(Settings.PG_PORT))} "
-            f"-U {shlex.quote(Settings.PG_USER)} "
+            f"psql -h {shlex.quote(self._config.host)} "
+            f"-p {shlex.quote(str(self._config.port))} "
+            f"-U {shlex.quote(self._config.user)} "
             f"-d {shlex.quote(db_name)} "
             f"-t -A --no-align"
         )
 
         safe_sql = sql.replace("'", "'\\''")
-        cmd = f"PGPASSWORD={shlex.quote(Settings.PG_PASSWORD)} {psql_cmd} -c '{safe_sql}'"
+        inner = f"export PGPASSWORD={shlex.quote(self._config.password)}; {psql_cmd} -c '{safe_sql}'"
+        cmd = f"bash -c {shlex.quote(inner)}"
 
         stdout, stderr, code = self._exec.execute(cmd)
         if code != 0:
@@ -56,7 +69,7 @@ class PostgresAdapter(DatabaseInspector):
 
         safe_dbs = []
         for name in all_dbs:
-            if name in Settings.EXCLUDED_DBS:
+            if name in self._config.excluded_dbs:
                 continue
             try:
                 validated = DbName(name)
@@ -69,8 +82,6 @@ class PostgresAdapter(DatabaseInspector):
     def get_change_stats(self, db_name: str) -> DbChangeStats:
         validated = DbName(db_name)
 
-        # Use pg_stat_user_tables for change counters (I/U/D)
-        # and pg_class for reliable row estimates (doesn't depend on ANALYZE being recent)
         sql = (
             "SELECT "
             "COALESCE(SUM(s.n_tup_ins),0), "
@@ -100,7 +111,6 @@ class PostgresAdapter(DatabaseInspector):
     def get_size_pretty(self, db_name: str) -> str:
         validated = DbName(db_name)
 
-        # Query from the target database itself to ensure access
         sql = f"SELECT pg_size_pretty(pg_database_size(current_database()))"
         try:
             return self._psql(sql, validated.value).strip()
