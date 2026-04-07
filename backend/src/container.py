@@ -13,10 +13,11 @@ from src.application.services.user_service import UserService
 from src.application.services.notification_service import NotificationService
 from src.application.services.report_service import ReportService
 from src.infrastructure.adapters.filesystem_adapter import FilesystemAdapter
-from src.infrastructure.adapters.postgres_adapter import PostgresAdapter
-from src.infrastructure.adapters.ssh_adapter import SSHAdapter
+from src.infrastructure.adapters.postgres_adapter import PostgresAdapter, PGConfig
+from src.infrastructure.adapters.ssh_adapter import SSHAdapter, SSHConfig
 from src.infrastructure.config import Settings
 from src.infrastructure.persistence.auth_repository import PostgresAuthRepository
+from src.infrastructure.persistence.host_key_store import PostgresHostKeyStore
 from src.infrastructure.persistence.user_repository import PostgresUserRepository
 from src.infrastructure.persistence.postgres_backup_repository import PostgresBackupRepository
 from src.infrastructure.persistence.notification_repository import NotificationRepository
@@ -30,9 +31,27 @@ class Container:
     """Composes the entire dependency graph."""
 
     def __init__(self):
+        # Configuration objects (immutable, injected into adapters)
+        ssh_config = SSHConfig(
+            host=Settings.SSH_HOST,
+            port=Settings.SSH_PORT,
+            user=Settings.SSH_USER,
+            password=Settings.SSH_PASSWORD,
+            key_path=Settings.SSH_KEY_PATH,
+            remote_tmp_dir=Settings.BACKUP_REMOTE_TMP_DIR,
+        )
+        pg_config = PGConfig(
+            host=Settings.PG_HOST,
+            port=Settings.PG_PORT,
+            user=Settings.PG_USER,
+            password=Settings.PG_PASSWORD,
+            excluded_dbs=frozenset(Settings.EXCLUDED_DBS),
+        )
+
         # Infrastructure adapters (shared — used for scan, single-DB mode)
-        self.ssh_adapter = SSHAdapter()
-        self.postgres_adapter = PostgresAdapter(executor=self.ssh_adapter)
+        self.host_key_store = PostgresHostKeyStore()
+        self.ssh_adapter = SSHAdapter(config=ssh_config, host_key_store=self.host_key_store)
+        self.postgres_adapter = PostgresAdapter(executor=self.ssh_adapter, config=pg_config)
         self.filesystem_adapter = FilesystemAdapter(
             backup_local_dir=Settings.BACKUP_LOCAL_DIR,
             retention_days=Settings.RETENTION_DAYS,
@@ -46,10 +65,10 @@ class Container:
         # ── Factories for parallel mode (each thread gets its own SSH) ──
 
         def _executor_factory() -> SSHAdapter:
-            return SSHAdapter()
+            return SSHAdapter(config=ssh_config, host_key_store=self.host_key_store)
 
         def _inspector_factory(executor):
-            return PostgresAdapter(executor=executor)
+            return PostgresAdapter(executor=executor, config=pg_config)
 
         def _transfer_factory(executor):
             """SSHAdapter implements both RemoteExecutor and FileTransfer."""
