@@ -1,7 +1,6 @@
 """Entry Point: Flask REST API for the React frontend."""
 
 import logging
-import shlex
 import sys
 import threading
 from pathlib import Path
@@ -155,14 +154,18 @@ def api_test_connection():
         ssh = _container.ssh_adapter
         ssh.connect()
 
-        stdout, stderr, code = ssh.execute(
-            f"PGPASSWORD={shlex.quote(Settings.PG_PASSWORD)} psql "
-            f"-h {shlex.quote(Settings.PG_HOST)} -p {shlex.quote(str(Settings.PG_PORT))} "
-            f"-U {shlex.quote(Settings.PG_USER)} -d postgres -t -A "
-            f"-c 'SELECT version();'"
-        )
+        try:
+            stdout = _container.postgres_adapter._psql("SELECT version();")
+        except RuntimeError as e:
+            ssh.disconnect()
+            return jsonify({
+                "success": False, "ssh": True, "postgres": False,
+                "error": str(e),
+            })
 
         ssh.disconnect()
+        code = 0
+        stderr = ""
 
         if code != 0:
             return jsonify({
