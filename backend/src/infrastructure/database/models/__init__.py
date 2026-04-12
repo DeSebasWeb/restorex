@@ -8,6 +8,9 @@ from .app_setting import AppSettingModel
 from .backup_progress import BackupProgressModel
 from .notification_channel import NotificationChannelModel
 from .notification_setting import NotificationSettingModel
+from .notification_template import NotificationTemplateModel
+from .user_notification_channel import UserNotificationChannelModel
+from .user_notification_setting import UserNotificationSettingModel
 from .role import RoleModel
 from .permission import PermissionModel
 from .role_permission import role_permissions
@@ -23,6 +26,9 @@ __all__ = [
     "BackupProgressModel",
     "NotificationChannelModel",
     "NotificationSettingModel",
+    "NotificationTemplateModel",
+    "UserNotificationChannelModel",
+    "UserNotificationSettingModel",
     "RoleModel",
     "PermissionModel",
     "role_permissions",

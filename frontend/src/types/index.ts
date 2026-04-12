@@ -65,6 +65,7 @@ export interface AppSettings {
   SCHEDULER_MINUTE: number | string
   GENERATE_SQL: boolean
   PARALLEL_WORKERS: number | string
+  NOTIFICATION_INHERIT_GLOBAL: boolean
 }
 
 export interface ConnectionTestResult {

@@ -13,6 +13,12 @@ from src.infrastructure.database.models import (
     RoleModel,
     PermissionModel,
     UserModel,
+    NotificationTemplateModel,
+    NotificationChannelModel,
+    NotificationSettingModel,
+    UserNotificationChannelModel,
+    UserNotificationSettingModel,
+    AppSettingModel,
     role_permissions,
 )
 
@@ -137,3 +143,151 @@ def seed_auth_data() -> None:
                             DEFAULT_ADMIN_USERNAME)
 
     logger.info("Auth seed data verified.")
+
+    # 5. Default notification templates
+    _seed_notification_templates()
+
+    # 6. Migrate global notifications to admin (one-time)
+    _migrate_global_notifications_to_admin()
+
+    # 7. Seed default notification policy
+    _seed_notification_policy()
+
+
+# ── Notification templates ────────────────────────────────────────
+
+DEFAULT_TEMPLATES = [
+    (
+        "backup_success",
+        "Backup Complete — {backed_up} backed up, {skipped} skipped",
+        "Databases:  {total_dbs}\nBacked up:  {backed_up}\nSkipped:    {skipped}\nFailed:     {failed}\nStarted:    {started_at}\nFinished:   {finished_at}",
+    ),
+    (
+        "backup_failure",
+        "Backup Failed — {failed} database(s) failed out of {total_dbs}",
+        "Databases:  {total_dbs}\nBacked up:  {backed_up}\nSkipped:    {skipped}\nFailed:     {failed}\nStarted:    {started_at}\nFinished:   {finished_at}\n\nErrors:\n{errors}",
+    ),
+    (
+        "backup_partial",
+        "Backup Partial — {backed_up} OK, {failed} failed",
+        "Databases:  {total_dbs}\nBacked up:  {backed_up}\nSkipped:    {skipped}\nFailed:     {failed}\nStarted:    {started_at}\nFinished:   {finished_at}\n\nErrors:\n{errors}",
+    ),
+    (
+        "backup_cancelled",
+        "Backup Cancelled",
+        "The backup was cancelled by user.\nStarted:  {started_at}\nStopped:  {finished_at}",
+    ),
+    (
+        "rotation",
+        "Retention Applied",
+        "{message}",
+    ),
+    (
+        "manual_start",
+        "Manual Backup Started",
+        "{message}",
+    ),
+    (
+        "scheduled_start",
+        "Scheduled Backup Started",
+        "{message}",
+    ),
+]
+
+
+def _seed_notification_templates() -> None:
+    """Create default system notification templates if they don't exist."""
+    with session_scope() as session:
+        existing = {
+            t.event_type
+            for t in session.query(NotificationTemplateModel)
+            .filter(NotificationTemplateModel.is_system == True)
+            .all()
+        }
+
+        for event_type, subject, body in DEFAULT_TEMPLATES:
+            if event_type not in existing:
+                session.add(NotificationTemplateModel(
+                    user_id=None,
+                    event_type=event_type,
+                    subject_template=subject,
+                    body_template=body,
+                    is_system=True,
+                ))
+                logger.info("Created system notification template: %s", event_type)
+
+    logger.info("Notification templates verified.")
+
+
+def _migrate_global_notifications_to_admin() -> None:
+    """One-time migration: copy global notification channels to the admin user.
+
+    After migration, removes the global channels so only per-user config exists.
+    Idempotent: skips if admin already has per-user channels or no global channels exist.
+    """
+    with session_scope() as session:
+        # Find admin user
+        admin = session.query(UserModel).filter_by(username="admin").first()
+        if not admin:
+            return
+
+        # Check if admin already has per-user channels (already migrated)
+        existing = (
+            session.query(UserNotificationChannelModel)
+            .filter(UserNotificationChannelModel.user_id == admin.id)
+            .count()
+        )
+        if existing > 0:
+            return  # Already migrated
+
+        # Get global channels
+        global_channels = session.query(NotificationChannelModel).all()
+        if not global_channels:
+            return
+
+        migrated = 0
+        for gch in global_channels:
+            # Create per-user channel for admin
+            user_ch = UserNotificationChannelModel(
+                user_id=admin.id,
+                channel=gch.channel,
+                enabled=gch.enabled,
+                on_success=gch.on_success,
+                on_failure=gch.on_failure,
+                on_partial=gch.on_partial,
+            )
+            session.add(user_ch)
+            session.flush()
+
+            # Copy settings (already encrypted — copy as-is)
+            for gs in gch.settings:
+                session.add(UserNotificationSettingModel(
+                    user_channel_id=user_ch.id,
+                    key=gs.key,
+                    value=gs.value,  # Already encrypted, no need to re-encrypt
+                ))
+
+            migrated += 1
+
+        # Remove global channels (migration complete)
+        for gch in global_channels:
+            session.delete(gch)
+
+        if migrated:
+            logger.info("Migrated %d global notification channel(s) to admin user.", migrated)
+
+
+def _seed_notification_policy() -> None:
+    """Seed the default notification inheritance policy setting."""
+    with session_scope() as session:
+        existing = (
+            session.query(AppSettingModel)
+            .filter(AppSettingModel.key == "NOTIFICATION_INHERIT_GLOBAL")
+            .first()
+        )
+        if not existing:
+            session.add(AppSettingModel(
+                key="NOTIFICATION_INHERIT_GLOBAL",
+                value="true",
+            ))
+            logger.info("Created notification inheritance policy setting (default: on).")

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Bell, Send, TestTube, CheckCircle, XCircle, Loader2, Eye, EyeOff, Mail, Hash } from 'lucide-react'
+import { Bell, Send, TestTube, CheckCircle, XCircle, Loader2, Eye, EyeOff, Mail, Hash, Shield } from 'lucide-react'
 import { api } from '../services/api'
 import { toast } from '../components/Toast'
 import type { NotificationChannel } from '../types'
@@ -72,7 +72,7 @@ function ChannelCard({ def, data, onSave }: { def: ChannelDef; data: Notificatio
   const handleSave = async () => {
     setSaving(true)
     try {
-      await api.saveNotification(def.id, config)
+      await api.saveUserNotification(def.id, config)
       toast(`${def.label} configuration saved`, 'success')
       onSave()
     } catch (err) {
@@ -86,8 +86,8 @@ function ChannelCard({ def, data, onSave }: { def: ChannelDef; data: Notificatio
     // Save first, then test
     setTesting(true)
     try {
-      await api.saveNotification(def.id, config)
-      const result = await api.testNotification(def.id)
+      await api.saveUserNotification(def.id, config)
+      const result = await api.testUserNotification(def.id)
       if (result.success) {
         toast(`${def.label} test sent successfully!`, 'success')
       } else {
@@ -218,6 +218,70 @@ function ChannelCard({ def, data, onSave }: { def: ChannelDef; data: Notificatio
   )
 }
 
+function InheritPolicyToggle() {
+  const [inherit, setInherit] = useState<boolean | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api.getSettings()
+      .then(data => {
+        setInherit(!!data.settings.NOTIFICATION_INHERIT_GLOBAL)
+      })
+      .catch(() => {
+        // Not admin — hide the toggle
+        setInherit(null)
+      })
+  }, [])
+
+  if (inherit === null) return null
+
+  const handleToggle = async (checked: boolean) => {
+    setInherit(checked)
+    setSaving(true)
+    try {
+      await api.saveSettings({ NOTIFICATION_INHERIT_GLOBAL: checked } as any)
+      toast(checked ? 'Users will inherit your notification settings' : 'Users must configure their own notifications', 'info')
+    } catch {
+      toast('Failed to update policy', 'error')
+      setInherit(!checked)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="theme-bg-card border theme-border rounded-2xl p-5">
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-cyan-500/10 flex items-center justify-center">
+          <Shield size={18} className="text-cyan-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold theme-text">Notification Policy</h3>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 font-semibold uppercase">Admin</span>
+          </div>
+          <p className="text-[10px] theme-text-faint mt-0.5">
+            {inherit
+              ? 'Users without personal config inherit your notification channels.'
+              : 'Only users who configure their own channels receive notifications.'}
+          </p>
+        </div>
+        <label className="relative cursor-pointer shrink-0">
+          <input
+            type="checkbox"
+            checked={inherit}
+            onChange={e => handleToggle(e.target.checked)}
+            disabled={saving}
+            className="sr-only peer"
+          />
+          <div className="w-10 h-5 rounded-full bg-slate-600/40 peer-checked:bg-cyan-500/80 transition-colors" />
+          <div className="absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-slate-300 peer-checked:bg-white peer-checked:translate-x-5 transition-all" />
+        </label>
+      </div>
+    </div>
+  )
+}
+
 export function NotificationsPage() {
   const [channels, setChannels] = useState<NotificationChannel[]>([])
   const [loading, setLoading] = useState(true)
@@ -227,7 +291,7 @@ export function NotificationsPage() {
     setLoading(true)
     setError(null)
     try {
-      const data = await api.getNotifications()
+      const data = await api.getUserNotifications()
       setChannels(data.channels || [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
@@ -266,9 +330,11 @@ export function NotificationsPage() {
           Notifications
         </h2>
         <p className="text-xs theme-text-muted mt-0.5">
-          Get notified when backups complete or fail. Configure one or more channels below.
+          Configure your personal notification channels. Each user has their own settings.
         </p>
       </div>
+
+      <InheritPolicyToggle />
 
       <div className="space-y-4">
         {CHANNELS.map(def => (

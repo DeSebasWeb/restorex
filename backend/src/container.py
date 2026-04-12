@@ -13,6 +13,7 @@ from src.application.services.user_service import UserService
 from src.application.services.notification_service import NotificationService
 from src.application.services.report_service import ReportService
 from src.infrastructure.adapters.filesystem_adapter import FilesystemAdapter
+from src.infrastructure.adapters.notification_sender_factory import ConcreteNotificationSenderFactory
 from src.infrastructure.adapters.postgres_adapter import PostgresAdapter, PGConfig
 from src.infrastructure.adapters.ssh_adapter import SSHAdapter, SSHConfig
 from src.infrastructure.config import Settings
@@ -20,7 +21,9 @@ from src.infrastructure.persistence.auth_repository import PostgresAuthRepositor
 from src.infrastructure.persistence.host_key_store import PostgresHostKeyStore
 from src.infrastructure.persistence.user_repository import PostgresUserRepository
 from src.infrastructure.persistence.postgres_backup_repository import PostgresBackupRepository
-from src.infrastructure.persistence.notification_repository import NotificationRepository
+from src.infrastructure.persistence.notification_repository import PostgresNotificationRepository
+from src.infrastructure.persistence.notification_template_repository import PostgresNotificationTemplateRepository
+from src.infrastructure.persistence.user_notification_repository import PostgresUserNotificationRepository
 from src.infrastructure.persistence.postgres_settings_repository import PostgresSettingsRepository
 from src.infrastructure.persistence.progress_tracker import ProgressTracker
 
@@ -129,9 +132,26 @@ class Container:
         )
 
         # Notifications
-        self.notification_repository = NotificationRepository()
+        self.notification_repository = PostgresNotificationRepository()
+        self.user_notification_repository = PostgresUserNotificationRepository()
+        self.notification_template_repository = PostgresNotificationTemplateRepository()
+        self.sender_factory = ConcreteNotificationSenderFactory()
+
+        def _inherit_policy() -> bool:
+            """Read the notification inheritance setting from DB."""
+            try:
+                repo = PostgresSettingsRepository()
+                settings = repo.load()
+                return settings.get("NOTIFICATION_INHERIT_GLOBAL", "true").lower() in ("true", "1")
+            except Exception:
+                return True  # Default: inherit
+
         self.notification_service = NotificationService(
             repository=self.notification_repository,
+            sender_factory=self.sender_factory,
+            user_repository=self.user_notification_repository,
+            template_repository=self.notification_template_repository,
+            inherit_policy=_inherit_policy,
         )
 
         # Authentication

@@ -138,6 +138,8 @@ export const api = {
 
   getBackupStatus: () => request<{ running: boolean; progress: BackupProgress | null }>('/backup/status'),
 
+  cancelBackup: () => request<{ message: string }>('/backup/cancel', { method: 'POST' }),
+
   scan: () => request<{ message: string; count: number }>('/scan', { method: 'POST' }),
 
   getReport: () => request<Report>('/report'),
@@ -161,7 +163,7 @@ export const api = {
       body: JSON.stringify(settings || {}),
     }),
 
-  // Notifications
+  // Notifications (global — admin only)
   getNotifications: () => request<{ channels: NotificationChannel[] }>('/notifications'),
 
   saveNotification: (channel: string, data: Partial<NotificationChannel>) =>
@@ -173,6 +175,21 @@ export const api = {
 
   testNotification: (channel: string) =>
     request<NotificationTestResult>(`/notifications/${channel}/test`, {
+      method: 'POST',
+    }),
+
+  // Notifications (per-user)
+  getUserNotifications: () => request<{ channels: NotificationChannel[] }>('/users/me/notifications'),
+
+  saveUserNotification: (channel: string, data: Partial<NotificationChannel>) =>
+    request<{ message: string }>(`/users/me/notifications/${channel}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  testUserNotification: (channel: string) =>
+    request<NotificationTestResult>(`/users/me/notifications/${channel}/test`, {
       method: 'POST',
     }),
 

@@ -81,11 +81,15 @@ export default function App() {
 
       pollRef.current = setInterval(async () => {
         try {
-          const { running } = await api.getBackupStatus()
-          if (!running) {
+          const data = await api.getBackupStatus()
+          if (!data.running) {
             if (pollRef.current) clearInterval(pollRef.current)
             pollRef.current = null
-            toast('Backup completed!', 'success')
+            const wasCancelled = data.progress?.current_step === 'Cancelled'
+            toast(
+              wasCancelled ? 'Backup cancelled.' : 'Backup completed!',
+              wasCancelled ? 'info' : 'success',
+            )
             await refresh()
           }
         } catch {
@@ -97,6 +101,15 @@ export default function App() {
       toast(err instanceof Error ? err.message : 'Backup failed', 'error')
     }
   }, [refresh])
+
+  const handleCancel = useCallback(async () => {
+    try {
+      await api.cancelBackup()
+      toast('Cancelling backup...', 'info')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Cancel failed', 'error')
+    }
+  }, [])
 
   // ── Auth gates ─────────────────────────────────────────────────
 
@@ -168,6 +181,7 @@ export default function App() {
           backupRunning={backupRunning}
           onScan={handleScan}
           onBackup={handleBackup}
+          onCancel={handleCancel}
           scanning={scanning}
           theme={theme}
           onToggleTheme={toggleTheme}

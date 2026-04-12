@@ -5,12 +5,13 @@ import sys
 import threading
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
 from src.container import init_container
+from src.domain.exceptions import BackupCancelled
 from src.entry_points.api.auth_middleware import require_auth, require_role
 from src.entry_points.api.auth_routes import auth_bp
 from src.entry_points.api.user_routes import user_bp
@@ -102,7 +103,7 @@ def api_get_settings():
     try:
         masked = _settings_repo.get_all_masked(Settings.get_env_defaults())
         # Normalize types: DB stores everything as strings, frontend expects correct types
-        _bool_keys = {"GENERATE_SQL"}
+        _bool_keys = {"GENERATE_SQL", "NOTIFICATION_INHERIT_GLOBAL"}
         _int_keys = {"SSH_PORT", "PG_PORT", "RETENTION_DAYS", "SCHEDULER_HOUR", "SCHEDULER_MINUTE", "PARALLEL_WORKERS"}
         for k in _bool_keys:
             if k in masked and isinstance(masked[k], str):
@@ -332,6 +333,7 @@ def api_run_backup():
     def _run():
         global _backup_running
         tracker = _container.progress_tracker
+        cancelled = False
         try:
             # Notify: manual backup starting
             try:
@@ -365,6 +367,18 @@ def api_run_backup():
             except Exception as rot_err:
                 logger.warning("Post-backup rotation failed: %s", rot_err)
 
+        except BackupCancelled:
+            cancelled = True
+            logger.info("Backup cancelled by user.")
+            tracker.cancel()
+            try:
+                _container.notification_service.notify_event(
+                    "backup_cancelled",
+                    "Backup was cancelled by user.",
+                )
+            except Exception:
+                pass
+
         except Exception as e:
             logger.exception("Backup thread failed: %s", e)
             try:
@@ -377,12 +391,24 @@ def api_run_backup():
             except Exception:
                 pass
         finally:
-            tracker.finish()
+            if not cancelled:
+                tracker.finish()
             with _backup_lock:
                 _backup_running = False
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"message": "Backup started", "force": force})
+
+
+@app.route("/api/backup/cancel", methods=["POST"])
+@require_auth
+@require_role("operator")
+def api_cancel_backup():
+    with _backup_lock:
+        if not _backup_running:
+            return jsonify({"error": "No backup is running"}), 409
+    _container.backup_service.cancel()
+    return jsonify({"message": "Cancel signal sent"})
 
 
 @app.route("/api/backup/status")
@@ -462,6 +488,48 @@ def api_save_notification(channel_name: str):
 def api_test_notification(channel_name: str):
     try:
         success, message = _container.notification_service.test_channel(channel_name)
+        return jsonify({"success": success, "message": message})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+# ── Per-user Notifications ─────────────────────────────────────
+
+@app.route("/api/users/me/notifications", methods=["GET"])
+@require_auth
+@require_role("viewer")
+def api_get_user_notifications():
+    user_id = g.current_user["id"]
+    try:
+        channels = _container.user_notification_repository.get_user_channels_masked(user_id)
+        return jsonify({"channels": channels})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/me/notifications/<channel_name>", methods=["POST"])
+@require_auth
+@require_role("viewer")
+def api_save_user_notification(channel_name: str):
+    user_id = g.current_user["id"]
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        _container.user_notification_repository.save_user_channel(user_id, channel_name, data)
+        return jsonify({"message": f"{channel_name} configuration saved"})
+    except Exception as e:
+        logger.exception("Failed to save user notification config")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/me/notifications/<channel_name>/test", methods=["POST"])
+@require_auth
+@require_role("viewer")
+def api_test_user_notification(channel_name: str):
+    user_id = g.current_user["id"]
+    try:
+        success, message = _container.notification_service.test_channel(channel_name, user_id=user_id)
         return jsonify({"success": success, "message": message})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
