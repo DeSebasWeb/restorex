@@ -7,6 +7,7 @@ using Fernet (AES-128-CBC + HMAC-SHA256).
 import logging
 from datetime import datetime
 
+from src.domain.ports.notification_repository import NotificationRepository as NotificationRepositoryPort
 from src.infrastructure.database.engine import session_scope
 from src.infrastructure.database.models import NotificationChannelModel, NotificationSettingModel
 from src.infrastructure.security.encryption import encrypt, decrypt, is_encrypted
@@ -17,8 +18,8 @@ logger = logging.getLogger(__name__)
 _SENSITIVE_KEYS = {"webhook_url", "bot_token", "smtp_password"}
 
 
-class NotificationRepository:
-    """CRUD operations for notification channel configs with encryption."""
+class PostgresNotificationRepository(NotificationRepositoryPort):
+    """PostgreSQL-backed notification channel config with Fernet encryption."""
 
     def _decrypt_settings(self, settings_rows) -> dict:
         """Read settings from DB, decrypting sensitive values."""
