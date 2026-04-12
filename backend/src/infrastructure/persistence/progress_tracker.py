@@ -194,6 +194,19 @@ class ProgressTracker:
     def complete_db(self, db_name: str, status: str, processed: int):
         self.complete_job(db_name, status, processed)
 
+    def cancel(self):
+        """Mark the current backup as cancelled by the user."""
+        with session_scope() as session:
+            row = session.query(BackupProgressModel).filter_by(id=1).first()
+            if row:
+                row.running = False
+                row.current_db = None
+                row.current_step = "Cancelled"
+                row.download_bytes = 0
+                row.download_total = 0
+                row.active_jobs = "[]"
+                row.updated_at = datetime.now()
+
     def finish(self):
         with session_scope() as session:
             row = session.query(BackupProgressModel).filter_by(id=1).first()

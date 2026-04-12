@@ -165,12 +165,14 @@ export function BackupProgressBar() {
             <CheckCircle size={11} className={
               progress.last_completed_status === 'success' ? 'text-emerald-400' :
               progress.last_completed_status === 'partial' ? 'text-amber-400' :
+              progress.last_completed_status === 'cancelled' ? 'text-orange-400' :
               'text-red-400'
             } />
             Last: {progress.last_completed_db}
             <span className={
               progress.last_completed_status === 'success' ? 'text-emerald-400' :
               progress.last_completed_status === 'partial' ? 'text-amber-400' :
+              progress.last_completed_status === 'cancelled' ? 'text-orange-400' :
               'text-red-400'
             }>
               ({progress.last_completed_status})

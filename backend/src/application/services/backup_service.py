@@ -22,6 +22,8 @@ from src.domain.ports.database_inspector import DatabaseInspector
 from src.domain.ports.file_transfer import FileTransfer
 from src.domain.ports.filesystem import Filesystem
 from src.domain.ports.remote_executor import RemoteExecutor
+from src.application.cancellation_token import CancellationToken
+from src.domain.exceptions import BackupCancelled
 from src.domain.value_objects.backup_format import BackupFormat
 from src.domain.value_objects.db_name import DbName
 
@@ -85,6 +87,20 @@ class BackupService:
         self._on_job_download = on_job_download or (lambda db, t, tot: None)
         self._processed_lock = threading.Lock()
         self._processed_count = 0
+        self._cancel_token: CancellationToken | None = None
+
+    def cancel(self) -> None:
+        """Signal cancellation of the running backup. Thread-safe."""
+        token = self._cancel_token
+        if token is not None:
+            token.cancel()
+            logger.info("Backup cancellation requested.")
+
+    def _check_cancelled(self) -> None:
+        """Raise BackupCancelled if cancellation was requested."""
+        token = self._cancel_token
+        if token is not None:
+            token.check()
 
     def scan_databases(self) -> list[dict]:
         """Scan server for databases and their stats. No backup performed."""
@@ -120,6 +136,7 @@ class BackupService:
         """
         summary = BackupSummaryDTO(started_at=datetime.now().isoformat())
         self._processed_count = 0
+        self._cancel_token = CancellationToken()
 
         # Phase 1: Scan (sequential — single connection)
         self._executor.connect()
@@ -133,6 +150,7 @@ class BackupService:
             dbs_to_backup = []
             dbs_to_skip = []
             for db_name in databases:
+                self._check_cancelled()
                 current_stats = self._inspector.get_change_stats(db_name)
                 size_pretty = self._inspector.get_size_pretty(db_name)
                 self._repo.save_stats(db_name, current_stats, size_pretty=size_pretty, source="scan")
@@ -192,6 +210,7 @@ class BackupService:
             logger.warning("Rotation failed: %s", e)
 
         summary.finished_at = datetime.now().isoformat()
+        self._cancel_token = None
         self._repo.save_run_summary(summary.to_dict())
 
         logger.info(
@@ -210,6 +229,7 @@ class BackupService:
         self._executor.connect()
         try:
             for i, (db_name, current_stats, reason) in enumerate(dbs_to_backup):
+                self._check_cancelled()
                 logger.info("Backing up %s — %s.", db_name, reason)
                 self._on_progress(db_name, f"Backing up ({reason})...", i, total)
                 self._on_job_progress(db_name, f"Backing up ({reason})...", i, total)
@@ -219,6 +239,9 @@ class BackupService:
                     download_cb=lambda t, tot: self._on_job_download(db_name, t, tot),
                 )
                 self._record_result(result, db_name, current_stats, i + 1, total, summary)
+        except BackupCancelled:
+            logger.info("Sequential backup cancelled by user.")
+            raise
         except Exception as e:
             logger.exception("Fatal error during sequential backup.")
             summary.errors.append({"db_name": "GLOBAL", "error": str(e)})
@@ -239,6 +262,8 @@ class BackupService:
 
         def _backup_worker(db_name: str, current_stats, reason: str) -> tuple[str, BackupResultDTO, object]:
             """Worker function: creates its own SSH connection, runs backup, disconnects."""
+            self._check_cancelled()
+
             executor = self._executor_factory()
             inspector = self._inspector_factory(executor) if self._inspector_factory else None
             transfer = self._transfer_factory(executor) if self._transfer_factory else executor
@@ -246,6 +271,7 @@ class BackupService:
             self._on_job_progress(db_name, f"Connecting ({reason})...", 0, 0)
             executor.connect()
             try:
+                self._check_cancelled()
                 self._on_job_progress(db_name, f"Backing up ({reason})...", 0, 0)
 
                 def _download_cb(transferred: int, total_bytes: int):
@@ -253,6 +279,9 @@ class BackupService:
 
                 result = self._backup_single_db(db_name, executor, transfer, download_cb=_download_cb)
                 return db_name, result, current_stats
+            except BackupCancelled:
+                logger.info("Worker for %s cancelled.", db_name)
+                return db_name, BackupResultDTO(db_name=db_name, status="cancelled", reason="Cancelled by user"), current_stats
             except Exception as e:
                 logger.exception("Worker failed for %s", db_name)
                 return db_name, BackupResultDTO(db_name=db_name, status="failed", error=str(e)), current_stats
@@ -271,6 +300,10 @@ class BackupService:
             for future in as_completed(futures):
                 try:
                     db_name, result, current_stats = future.result()
+                except BackupCancelled:
+                    db_name = futures[future]
+                    result = BackupResultDTO(db_name=db_name, status="cancelled", reason="Cancelled by user")
+                    current_stats = None
                 except Exception as e:
                     db_name = futures[future]
                     result = BackupResultDTO(db_name=db_name, status="failed", error=str(e))
@@ -282,6 +315,12 @@ class BackupService:
 
                 with summary_lock:
                     self._record_result(result, db_name, current_stats, processed, total, summary)
+
+                # Cancel pending futures if cancellation was requested
+                if self._cancel_token and self._cancel_token.is_cancelled:
+                    for f in futures:
+                        f.cancel()
+                    break
 
     def _record_result(
         self,
@@ -303,6 +342,10 @@ class BackupService:
             status_label = "Done" if result.status == "success" else "Partial"
             self._on_progress(db_name, f"{status_label} ({size_label})", processed, total)
             self._on_job_progress(db_name, f"{status_label} ({size_label})", processed, total)
+        elif result.status == "cancelled":
+            summary.failed += 1
+            self._on_progress(db_name, "Cancelled", processed, total)
+            self._on_job_progress(db_name, "Cancelled", processed, total)
         else:
             summary.failed += 1
             summary.errors.append({"db_name": db_name, "error": result.error})
@@ -347,6 +390,8 @@ class BackupService:
                 formats.append(BackupFormat.PLAIN)
 
             for fmt in formats:
+                self._check_cancelled()
+
                 filename = f"{safe_name}_{timestamp}{fmt.file_extension}"
                 remote_path = f"{remote_dir}/{filename}"
                 local_path = local_dir / filename
@@ -372,7 +417,7 @@ class BackupService:
                     cmd = f"bash -c {shlex.quote(inner)}"
 
                     remote_files_created.append(remote_path)
-                    _, stderr, code = executor.execute(cmd)
+                    _, stderr, code = self._execute_cancellable(executor, cmd)
 
                     if code != 0:
                         logger.error("pg_dump %s failed for %s: %s", fmt.name, safe_name, stderr)
@@ -384,6 +429,7 @@ class BackupService:
                         result.error = f"pg_dump {fmt.name} failed: {stderr}"
                         return result
 
+                    self._check_cancelled()
                     remote_size = transfer.get_remote_size(remote_path)
                     self._on_job_progress(safe_name, f"Downloading {ext} ({self._human_size(remote_size)})...", 0, 0)
                     transfer.download(remote_path, local_path, progress_cb=_download_cb)
@@ -427,6 +473,15 @@ class BackupService:
                 self._human_size(sql_size),
             )
 
+        except BackupCancelled:
+            result.status = "cancelled"
+            result.reason = "Cancelled by user"
+            result.duration_seconds = round(time.time() - start, 2)
+            logger.info("Backup cancelled for %s", safe_name)
+            for rpath in remote_files_created:
+                self._safe_cleanup(transfer, rpath)
+            raise
+
         except Exception as e:
             result.error = str(e)
             result.duration_seconds = round(time.time() - start, 2)
@@ -435,6 +490,48 @@ class BackupService:
                 self._safe_cleanup(transfer, rpath)
 
         return result
+
+    def _execute_cancellable(
+        self,
+        executor: RemoteExecutor,
+        command: str,
+    ) -> tuple[str, str, int]:
+        """Execute a remote command while polling for cancellation.
+
+        Runs the command in a background thread and checks the cancel
+        token every second. If cancelled, the SSH channel is closed
+        which terminates the remote process.
+        """
+        if self._cancel_token is None or not self._cancel_token.is_cancelled:
+            result_holder: list = []
+            error_holder: list = []
+
+            def _run():
+                try:
+                    result_holder.append(executor.execute(command))
+                except Exception as e:
+                    error_holder.append(e)
+
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+
+            while t.is_alive():
+                t.join(timeout=1.0)
+                if self._cancel_token and self._cancel_token.is_cancelled:
+                    logger.info("Cancelling running remote command...")
+                    # Close SSH transport to kill the remote process
+                    try:
+                        executor.disconnect()
+                    except Exception:
+                        pass
+                    raise BackupCancelled("Backup cancelled by user")
+
+            if error_holder:
+                raise error_holder[0]
+            if result_holder:
+                return result_holder[0]
+
+        raise BackupCancelled("Backup cancelled by user")
 
     @staticmethod
     def _safe_cleanup(transfer: FileTransfer, remote_path: str) -> None:

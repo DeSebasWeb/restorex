@@ -15,3 +15,7 @@ class BackupError(DomainError):
 
 class DatabaseNotFoundError(DomainError):
     """Requested database does not exist on the server."""
+
+
+class BackupCancelled(DomainError):
+    """Raised when a backup operation is cancelled by the user."""

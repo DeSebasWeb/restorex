@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Search, Download, Zap, Wifi, WifiOff, Sun, Moon } from 'lucide-react'
+import { Search, Download, Zap, Wifi, WifiOff, Sun, Moon, XCircle } from 'lucide-react'
 import type { Theme } from '../hooks/useTheme'
 interface TopBarProps {
   title: string
   backupRunning: boolean
   onScan: () => void
   onBackup: (force: boolean) => void
+  onCancel: () => void
   scanning: boolean
   theme: Theme
   onToggleTheme: () => void
@@ -26,7 +27,31 @@ function LiveClock() {
   )
 }
 
-export function TopBar({ title, backupRunning, onScan, onBackup, scanning, theme, onToggleTheme }: TopBarProps) {
+function CancelButton({ onCancel }: { onCancel: () => void }) {
+  const [sent, setSent] = useState(false)
+
+  const handleClick = () => {
+    if (sent) return
+    setSent(true)
+    onCancel()
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={sent}
+      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold
+                 bg-red-500/10 text-red-400 border border-red-500/20
+                 hover:bg-red-500/20 hover:border-red-500/30
+                 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200"
+    >
+      <XCircle size={14} />
+      {sent ? 'Cancelling...' : 'Cancel Backup'}
+    </button>
+  )
+}
+
+export function TopBar({ title, backupRunning, onScan, onBackup, onCancel, scanning, theme, onToggleTheme }: TopBarProps) {
   const [connected, setConnected] = useState(true)
 
   useEffect(() => {
@@ -95,29 +120,33 @@ export function TopBar({ title, backupRunning, onScan, onBackup, scanning, theme
           {scanning ? 'Scanning...' : 'Scan DBs'}
         </button>
 
-        <button
-          onClick={() => onBackup(false)}
-          disabled={backupRunning}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold
-                     bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-500/20
-                     hover:shadow-blue-500/30 hover:brightness-110
-                     disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none transition-all duration-200"
-        >
-          <Download size={14} />
-          {backupRunning ? 'Running...' : 'Smart Backup'}
-        </button>
+        {backupRunning ? (
+          <CancelButton onCancel={onCancel} />
+        ) : (
+          <>
+            <button
+              onClick={() => onBackup(false)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold
+                         bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-500/20
+                         hover:shadow-blue-500/30 hover:brightness-110
+                         transition-all duration-200"
+            >
+              <Download size={14} />
+              Smart Backup
+            </button>
 
-        <button
-          onClick={() => onBackup(true)}
-          disabled={backupRunning}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold
-                     bg-amber-500/10 text-amber-500 border border-amber-500/20
-                     hover:bg-amber-500/20 hover:border-amber-500/30
-                     disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200"
-        >
-          <Zap size={14} />
-          Force All
-        </button>
+            <button
+              onClick={() => onBackup(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold
+                         bg-amber-500/10 text-amber-500 border border-amber-500/20
+                         hover:bg-amber-500/20 hover:border-amber-500/30
+                         transition-all duration-200"
+            >
+              <Zap size={14} />
+              Force All
+            </button>
+          </>
+        )}
       </div>
     </header>
   )
